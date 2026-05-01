@@ -8,9 +8,13 @@ Talks directly to Ollama's `/api/chat` endpoint, bypassing the OpenAI-compat shi
 
 ## Why this exists
 
+*I was simply trying to use the pi agent locally with ollama and this can of worms opened up. Seemed like a good learning opportunity and a great way to start trying to get more involved in the community. New to contributing to open source and build-in-public etiquette, so feedback genuinely welcome. I hope you find this useful!*
+
 Pi ships with an `openai-completions` adapter that routes Ollama traffic through Ollama's OpenAI-compat shim. The shim has a known streaming bug: `tool_calls` are dropped from the streamed deltas. Without those tool calls, pi's agent loop stalls on the first tool use — the model produces a tool call, the wire eats it, pi never sees it.
 
-Ollama's native `/api/chat` endpoint doesn't have this problem. This extension routes around the shim entirely.
+Ollama's native `/api/chat` endpoint doesn't have this problem. This extension talks to `/api/chat` directly — routing around the shim, not patching it — so tool calls survive streaming and the agent loop completes through tool use, multi-turn workflows, and reasoning-heavy prompts.
+
+Other Ollama extensions for pi exist (linked in [Related projects](#related-projects) below) and they're solid for chat-style use. The architectural difference here is the API path: through the shim vs. around it. If you're using local Ollama specifically for the agentic tool-call workflows pi is designed around, that distinction is the whole point of this extension.
 
 ---
 
