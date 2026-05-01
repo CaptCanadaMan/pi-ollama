@@ -1,0 +1,40 @@
+{
+  "name": "pi-ollama",
+  "version": "0.1.0",
+  "description": "Native Ollama provider for pi coding agent — fixes tool calling under streaming",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "keywords": ["pi", "ollama", "llm", "coding-agent", "extension"],
+  "author": "CaptCanadaMan (https://github.com/CaptCanadaMan)",
+  "contributors": [
+    "Claude (Anthropic) <noreply@anthropic.com> (https://claude.com/claude-code)"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CaptCanadaMan/pi-ollama.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CaptCanadaMan/pi-ollama/issues"
+  },
+  "homepage": "https://github.com/CaptCanadaMan/pi-ollama#readme",
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": "latest",
+    "@mariozechner/pi-coding-agent": "latest",
+    "typescript": "^5.8.0"
+  }
+}

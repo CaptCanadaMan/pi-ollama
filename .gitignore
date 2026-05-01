@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output (we don't compile, but in case anyone ever does)
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+pi-ollama-debug.log
+
+# Diagnostic dumps from OLLAMA_NATIVE_DUMP_DIR
+/tmp/pi-ollama-dump/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Internal session context — not for the public repo
+CLAUDE.md
+githubresearch.md
