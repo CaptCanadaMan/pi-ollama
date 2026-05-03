@@ -17,11 +17,16 @@ interface OllamaPs {
 	}>;
 }
 
-// Minimal structural type for the ctx.ui.notify() surface we use.
+// Minimal structural type for the ctx.ui surface we use.
 // The real type is ExtensionCommandContext from @mariozechner/pi-coding-agent.
 interface CommandUIContext {
 	ui: {
 		notify(message: string, type?: "info" | "warning" | "error"): void;
+		select(
+			title: string,
+			options: string[],
+			opts?: { signal?: AbortSignal; timeout?: number },
+		): Promise<string | undefined>;
 	};
 }
 
@@ -131,33 +136,65 @@ export function registerCommands(
 
 	pi.registerCommand("ollama-info", {
 		description:
-			"Show capability details for a specific Ollama model. Usage: /ollama-info <model-id>",
+			"Show capability details for an Ollama model. Usage: /ollama-info [model-id] (omit to pick from list)",
 		handler: async (args, ctx) => {
-			const modelId = args.trim();
-			if (!modelId) {
-				ctx.ui.notify(
-					"Usage: /ollama-info <model-id>\nExample: /ollama-info gemma4:26b",
-					"warning",
+			const typed = args.trim();
+			let chosen: string | undefined;
+
+			if (typed) {
+				chosen = typed;
+			} else {
+				const registered = getModels();
+				if (registered.length === 0) {
+					ctx.ui.notify(
+						"No Ollama models registered. Run /ollama-refresh first.",
+						"warning",
+					);
+					return;
+				}
+				// Build enriched labels matching /ollama-status's row format,
+				// with a label→id map so the picker returns a clean model id.
+				const labelToId = new Map<string, string>();
+				const options: string[] = [];
+				for (const m of registered) {
+					const flags = [
+						m.tools ? "tools" : null,
+						m.vision ? "vision" : null,
+						m.reasoning ? "reasoning" : null,
+					]
+						.filter(Boolean)
+						.join(", ");
+					const label = `${m.id.padEnd(32)} ctx:${m.contextWindow.toLocaleString()}  [${flags || "basic"}]`;
+					labelToId.set(label, m.id);
+					options.push(label);
+				}
+				const selected = await ctx.ui.select(
+					"Select a model to inspect",
+					options,
 				);
-				return;
+				if (!selected) {
+					// User cancelled the picker — quiet exit, no notify.
+					return;
+				}
+				chosen = labelToId.get(selected) ?? selected;
 			}
 
 			try {
 				const res = await fetch(`${settings.baseUrl}/api/show`, {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ name: modelId }),
+					body: JSON.stringify({ name: chosen }),
 				});
 				if (!res.ok) {
 					ctx.ui.notify(
-						`/api/show returned HTTP ${res.status} for ${modelId}`,
+						`/api/show returned HTTP ${res.status} for ${chosen}`,
 						"error",
 					);
 					return;
 				}
 				const show = await res.json();
 				ctx.ui.notify(
-					`${modelId}\n\n${JSON.stringify(show, null, 2)}`,
+					`${chosen}\n\n${JSON.stringify(show, null, 2)}`,
 					"info",
 				);
 			} catch (e) {

@@ -1,6 +1,6 @@
 {
   "name": "pi-ollama",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Native Ollama provider for pi coding agent — fixes tool calling under streaming",
   "type": "module",
   "main": "src/index.ts",
