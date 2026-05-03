@@ -37,6 +37,26 @@ Requires Ollama running locally (default `http://localhost:11434`) and at least 
 
 ---
 
+## Uninstall
+
+```bash
+pi uninstall npm:pi-ollama
+```
+
+This removes the on-disk package and the entry from `~/.pi/agent/settings.json`. Pi won't auto-restore it on the next launch.
+
+The bare form `pi uninstall pi-ollama` doesn't work — pi parses bare names as relative local paths rather than npm packages, so the `npm:` prefix is required for any npm-installed extension.
+
+If you've already manually deleted the package directory (find it with `npm root -g`), pi will silently reinstall it on the next launch because `npm:pi-ollama` is still in `~/.pi/agent/settings.json`. Run the uninstall command above to clear the settings entry — the disk side is already clean.
+
+Optional cleanup of the model discovery cache:
+
+```bash
+rm -f ~/.pi/agent/cache/pi-ollama-models.json
+```
+
+---
+
 ## Quick start
 
 After installation, launch pi and run:
