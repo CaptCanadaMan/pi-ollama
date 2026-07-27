@@ -34,12 +34,12 @@
     "node": ">=22.19.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.75.5",
-    "@earendil-works/pi-ai": ">=0.75.5"
+    "@earendil-works/pi-ai": ">=0.75.5",
+    "@earendil-works/pi-coding-agent": ">=0.75.5"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.75.5",
-    "@earendil-works/pi-coding-agent": "0.75.5",
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "typescript": "5.9.3"
   }
 }
