@@ -126,6 +126,10 @@ On extension load, the provider:
 
 If Ollama is unreachable at startup, the cached list is used as a fallback. Run `/ollama-refresh` once it's available to re-discover.
 
+## Thinking control
+
+For thinking-capable models, the provider forwards pi's thinking level to Ollama's `think` request field: any level set in pi sends `think: true`; thinking off sends an explicit `think: false`. The explicit false is load-bearing — Ollama defaults thinking-capable models (the gemma4 family included) to thinking **on** when the field is omitted, so before this mapping existed, turning thinking off in pi had no effect on the wire and every turn paid the hidden reasoning-token cost (measured ~8× the generated tokens on a short gemma4:12b answer). Models without thinking support never get the field.
+
 ---
 
 ## Reliability features

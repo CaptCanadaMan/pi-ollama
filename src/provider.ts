@@ -36,6 +36,7 @@ interface PiModel {
 	contextWindow?: number;
 	maxTokens?: number;
 	input?: ("text" | "image")[];
+	reasoning?: boolean;
 }
 
 interface PiContext {
@@ -55,6 +56,9 @@ interface PiSimpleStreamOptions {
 	headers?: Record<string, string>;
 	temperature?: number;
 	maxTokens?: number;
+	// pi's SimpleStreamOptions.reasoning: ThinkingLevel — "off" is not a member;
+	// thinking-off arrives as the field being absent.
+	reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh";
 	onPayload?: (body: unknown, model: PiModel) => Promise<unknown> | unknown;
 	onResponse?: (
 		info: { status: number; headers: Record<string, string> },
@@ -116,6 +120,18 @@ function mapDoneReason(reason: string | undefined): string {
 		default:
 			return "stop";
 	}
+}
+
+/**
+ * Map pi's thinking level to Ollama's `think` flag. pi encodes thinking-off as
+ * the `reasoning` option being absent (its ThinkingLevel type has no "off"
+ * member), while Ollama defaults thinking-capable models to thinking ON when
+ * `think` is omitted — so off only works as an explicit `false` on the wire.
+ */
+export function resolveThink(
+	reasoning: PiSimpleStreamOptions["reasoning"],
+): boolean {
+	return reasoning !== undefined;
 }
 
 // ============================================================================
@@ -186,6 +202,12 @@ export function streamOllama(
 				keep_alive: settings.keepAlive ?? DEFAULT_KEEP_ALIVE,
 			};
 
+			// Only sent for thinking-capable models; Ollama rejects `think` on
+			// models without thinking support.
+			if (model.reasoning) {
+				body.think = resolveThink(options?.reasoning);
+			}
+
 			if (context.tools && context.tools.length > 0) {
 				body.tools = convertTools(context.tools);
 			}
@@ -208,6 +230,7 @@ export function streamOllama(
 				messages: body.messages.length,
 				tools: body.tools?.length ?? 0,
 				num_ctx: body.options?.num_ctx,
+				think: body.think,
 				lastMessageRole: body.messages[body.messages.length - 1]?.role,
 			});
 

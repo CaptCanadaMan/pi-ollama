@@ -48,6 +48,9 @@ export interface OllamaRequest {
 	messages: OllamaWireMessage[];
 	tools?: OllamaTool[];
 	stream: true;
+	// Ollama defaults thinking-capable models to thinking ON when this field is
+	// absent — off must be sent explicitly, not omitted.
+	think?: boolean;
 	options?: {
 		num_ctx?: number;
 		temperature?: number;
