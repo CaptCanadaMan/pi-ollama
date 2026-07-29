@@ -94,7 +94,7 @@ export function convertMessages(
 			const wire = convertAssistant(msg as AssistantMessage);
 			if (wire) out.push(wire);
 		} else if (msg.role === "toolResult") {
-			out.push(convertToolResult(msg as ToolResultMessage));
+			out.push(convertToolResult(msg as ToolResultMessage, supportsVision));
 		} else {
 			// Unknown role — pi's compat flags should convert developer→system
 			// before reaching us, but log if anything else arrives so we can
@@ -171,17 +171,29 @@ function convertAssistant(msg: AssistantMessage): OllamaWireMessage | null {
 	return wire;
 }
 
-function convertToolResult(msg: ToolResultMessage): OllamaWireMessage {
+function convertToolResult(
+	msg: ToolResultMessage,
+	supportsVision: boolean,
+): OllamaWireMessage {
 	const text = msg.content
 		.filter(isText)
 		.map((b) => b.text)
 		.join("\n");
 
-	return {
+	// Ollama accepts an images array on role:"tool" messages, same as on user
+	// messages — verified live against gemma4:12b (red/blue control images both
+	// identified from the tool turn). If a future Ollama build regresses this,
+	// the fallback shape is a synthetic follow-up user message carrying the
+	// images (AdhamAH's fork approach).
+	const images = supportsVision ? msg.content.filter(isImage).map((b) => b.data) : [];
+
+	const wire: OllamaWireMessage = {
 		role: "tool",
-		content: sanitize(text || "(no result)"),
+		content: sanitize(text || (images.length > 0 ? "(image result)" : "(no result)")),
 		tool_name: msg.toolName,
 	};
+	if (images.length > 0) wire.images = images;
+	return wire;
 }
 
 // ============================================================================

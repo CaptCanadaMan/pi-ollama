@@ -144,6 +144,12 @@ Ollama's streaming has a few known edge cases. The provider handles them explici
 
 **Post-stream ghost check.** Belt-and-suspenders: if `eval_count > 0` but no content, thinking, or tool calls landed in the parsed stream, the provider raises an error rather than reporting a successful empty turn.
 
+**Swallowed-tool-call detection.** Ollama can buffer a tool call server-side, fail to parse it, and end the turn with no `tool_calls` on the wire — the model announces an action and then nothing happens (issue #3). The guard detects the generated≫streamed token gap and raises a retryable error instead of completing silently. It stands down on batched streams (Ollama Cloud emits ~30 tokens per NDJSON chunk vs ~1 locally), which previously false-positived the ratio heuristic on healthy cloud turns (issue #4).
+
+## Vision
+
+For vision-capable models, images pass through from **both** user messages and **tool results** as base64 `images` arrays on the wire — a tool that returns a camera frame or screenshot reaches the model directly on its tool message (verified against gemma4). Models without vision never receive image data.
+
 ---
 
 ## Compatibility

@@ -56,9 +56,12 @@ interface PiSimpleStreamOptions {
 	headers?: Record<string, string>;
 	temperature?: number;
 	maxTokens?: number;
-	// pi's SimpleStreamOptions.reasoning: ThinkingLevel — "off" is not a member;
-	// thinking-off arrives as the field being absent.
-	reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	// pi's SimpleStreamOptions.reasoning: ThinkingLevel ("minimal"|"low"|"medium"|
+	// "high"|"xhigh") — "off" is not a member; thinking-off arrives as the field
+	// being absent. Typed as plain string here: this crosses a runtime boundary
+	// from whatever pi version hosts us, and resolveThink treats a literal "off"
+	// defensively.
+	reasoning?: string;
 	onPayload?: (body: unknown, model: PiModel) => Promise<unknown> | unknown;
 	onResponse?: (
 		info: { status: number; headers: Record<string, string> },
@@ -127,11 +130,57 @@ function mapDoneReason(reason: string | undefined): string {
  * the `reasoning` option being absent (its ThinkingLevel type has no "off"
  * member), while Ollama defaults thinking-capable models to thinking ON when
  * `think` is omitted — so off only works as an explicit `false` on the wire.
+ * A literal "off" string is also treated as off, defensively — the option
+ * crosses a runtime boundary from whatever pi version is hosting us.
  */
-export function resolveThink(
-	reasoning: PiSimpleStreamOptions["reasoning"],
-): boolean {
-	return reasoning !== undefined;
+export function resolveThink(reasoning: string | undefined): boolean {
+	return reasoning !== undefined && reasoning !== "off";
+}
+
+/** Signals the swallowed-tool-call guard decides on (see below). */
+export interface SwallowSignals {
+	sawToolCalls: boolean;
+	sawDoneChunk: boolean;
+	outputTokens: number;
+	chunksReceived: number;
+}
+
+/**
+ * Swallowed-tool-call detection (issue #3): the stream completed normally with
+ * visible content but no tool call, yet the model generated far more tokens
+ * than it streamed — the signature of a tool call Ollama buffered and dropped
+ * before sending (gemma4:e4b after a long think).
+ *
+ * chunksReceived ≈ streamed tokens only on LOCAL streams (~1 token per NDJSON
+ * chunk). Batched streams — Ollama Cloud emits ~30 tokens/chunk — deflate the
+ * streamed ratio and false-positived this guard on healthy turns (issue #4),
+ * so the guard now stands down when tokens-per-chunk indicates batching. The
+ * real issue-#3 swallow ran ~2.8 tokens/chunk, well under the gate. Tradeoff
+ * accepted: a swallow on a batched stream is currently undetectable — its
+ * signature is uncharacterized (the n=1 calibration discipline: thresholds
+ * come from observed logs, not guesses).
+ *
+ * Threshold calibration: issue-#3 log ratio 0.36 on the swallow vs 0.81–0.92
+ * on healthy local tool turns; issue-#4 log ~30 tokens/chunk on Ollama Cloud.
+ */
+export function shouldFlagSwallowedToolCall(s: SwallowSignals): boolean {
+	const SWALLOW_MIN_OUTPUT_TOKENS = 200; // ignore short turns (noise floor)
+	const SWALLOW_MAX_STREAMED_RATIO = 0.6; // streamed/generated below this is suspect
+	const SWALLOW_MIN_TOKEN_GAP = 200; // and the absolute shortfall must be large
+	const SWALLOW_MAX_TOKENS_PER_CHUNK = 6; // above this the stream is batched — stand down (issue #4)
+
+	if (s.sawToolCalls || !s.sawDoneChunk) return false;
+	if (s.outputTokens <= SWALLOW_MIN_OUTPUT_TOKENS) return false;
+	if (
+		s.chunksReceived > 0 &&
+		s.outputTokens / s.chunksReceived > SWALLOW_MAX_TOKENS_PER_CHUNK
+	) {
+		return false;
+	}
+	return (
+		s.chunksReceived / s.outputTokens < SWALLOW_MAX_STREAMED_RATIO &&
+		s.outputTokens - s.chunksReceived > SWALLOW_MIN_TOKEN_GAP
+	);
 }
 
 // ============================================================================
@@ -627,29 +676,19 @@ export function streamOllama(
 				);
 			}
 
-			// Swallowed-tool-call detection (issue #3): the stream completed
-			// normally with visible content but no tool call, yet the model
-			// generated far more tokens than it streamed — the signature of a tool
-			// call Ollama buffered and dropped before sending (gemma4:e4b after a
-			// long think). The post-stream ghost check above misses it because
-			// thinking + text DID stream first; without this guard the turn ends as
-			// a silent no-op ("I'll proceed with the edits" → nothing happens).
-			//
-			// chunksReceived ≈ streamed tokens because Ollama streams ~1 token per
-			// NDJSON chunk. CALIBRATION IS n=1 — thresholds come from the single
-			// issue-#3 log (gemma4:e4b: streamed/generated ratio 0.36 on the swallow
-			// vs 0.81–0.92 on healthy tool turns). If a legitimate turn ever trips
-			// this (e.g. an Ollama build that batches tokens per chunk, deflating the
-			// ratio), widen these.
-			const SWALLOW_MIN_OUTPUT_TOKENS = 200; // ignore short turns (noise floor)
-			const SWALLOW_MAX_STREAMED_RATIO = 0.6; // streamed/generated below this is suspect
-			const SWALLOW_MIN_TOKEN_GAP = 200; // and the absolute shortfall must be large
+			// Swallowed-tool-call detection — decision extracted to the pure
+			// shouldFlagSwallowedToolCall (top of file) so the thresholds and the
+			// issue-#4 batched-stream stand-down are unit-testable. The post-stream
+			// ghost check above misses this case because thinking + text DID stream
+			// first; without the guard the turn ends as a silent no-op ("I'll
+			// proceed with the edits" → nothing happens).
 			if (
-				!sawToolCalls &&
-				sawDoneChunk &&
-				outputTokens > SWALLOW_MIN_OUTPUT_TOKENS &&
-				chunksReceived / outputTokens < SWALLOW_MAX_STREAMED_RATIO &&
-				outputTokens - chunksReceived > SWALLOW_MIN_TOKEN_GAP
+				shouldFlagSwallowedToolCall({
+					sawToolCalls,
+					sawDoneChunk,
+					outputTokens,
+					chunksReceived,
+				})
 			) {
 				dbg("swallowed-toolcall", {
 					outputTokens,

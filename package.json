@@ -1,6 +1,6 @@
 {
   "name": "pi-ollama",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Native Ollama provider for pi coding agent — fixes tool calling under streaming",
   "type": "module",
   "main": "src/index.ts",
@@ -10,7 +10,8 @@
     ]
   },
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "keywords": [
     "pi",
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "0.75.5",
     "@earendil-works/pi-coding-agent": "0.82.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "4.1.5"
   }
 }
