@@ -8,7 +8,10 @@
 
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import { discoverModels, type DiscoveredModel } from "./discovery.js";
-import type { OllamaExtensionSettings } from "./settings.js";
+import {
+	isValidKeepAlive,
+	type OllamaExtensionSettings,
+} from "./settings.js";
 
 interface OllamaPs {
 	models?: Array<{
@@ -301,6 +304,102 @@ export function registerCommands(
 			} else {
 				ctx.ui.notify(
 					`Context length set to ${newValue.toLocaleString()} tokens. Applies to the next /api/chat request and persists across pi launches.`,
+					"info",
+				);
+			}
+		},
+	});
+
+	pi.registerCommand("ollama-keep-alive", {
+		description:
+			"Set the keep_alive value pi-ollama sends to /api/chat. Persistent across restarts.",
+		handler: async (_args, ctx) => {
+			const PRESETS: Array<{ label: string; value: string | number }> = [
+				{ label: "Keep loaded forever (-1)", value: -1 },
+				{ label: "1 hour", value: "1h" },
+				{ label: "30 minutes", value: "30m" },
+				{ label: "15 minutes", value: "15m" },
+				{ label: "5 minutes (Ollama default)", value: "5m" },
+				{ label: "Unload immediately (0)", value: 0 },
+			];
+			const USE_SERVER_DEFAULT =
+				"Server default (honor Ollama's OLLAMA_KEEP_ALIVE)";
+			const CUSTOM = "Custom value…";
+
+			const current = settings.keepAlive;
+			const currentNote =
+				current !== undefined
+					? `Current override: ${current}`
+					: "Current: server default (no override)";
+
+			const options = [
+				...PRESETS.map((p) => p.label),
+				USE_SERVER_DEFAULT,
+				CUSTOM,
+			];
+
+			const selected = await ctx.ui.select(
+				`keep_alive for /api/chat — ${currentNote}`,
+				options,
+			);
+			if (!selected) {
+				// User cancelled — quiet exit.
+				return;
+			}
+
+			let newValue: string | number | undefined;
+
+			if (selected === USE_SERVER_DEFAULT) {
+				newValue = undefined;
+			} else if (selected === CUSTOM) {
+				const raw = await ctx.ui.input(
+					"Enter keep_alive (e.g. 5m, 30m, 1h, 3600, -1, 0)",
+					"e.g., 30m",
+				);
+				if (!raw) {
+					// User cancelled the input — quiet exit.
+					return;
+				}
+				const trimmed = raw.trim();
+				if (!isValidKeepAlive(trimmed)) {
+					ctx.ui.notify(
+						`Invalid keep_alive "${trimmed}". Use a duration like "5m", "1h", "30s", a number of seconds, -1 to keep loaded forever, or 0 to unload immediately.`,
+						"error",
+					);
+					return;
+				}
+				const asNumber = Number(trimmed);
+				newValue = Number.isFinite(asNumber) && /\d/.test(trimmed)
+					? asNumber
+					: trimmed;
+			} else {
+				const matched = PRESETS.find((p) => p.label === selected);
+				if (!matched) {
+					ctx.ui.notify("Unrecognized selection.", "error");
+					return;
+				}
+				newValue = matched.value;
+			}
+
+			// Persist to disk AND mutate the shared settings object so the
+			// next /api/chat request picks up the new value without a relaunch.
+			const persisted = loadPersistedConfig();
+			if (newValue === undefined) {
+				delete persisted.keepAlive;
+			} else {
+				persisted.keepAlive = newValue;
+			}
+			savePersistedConfig(persisted);
+			settings.keepAlive = newValue;
+
+			if (newValue === undefined) {
+				ctx.ui.notify(
+					"keep_alive override cleared. Requests omit keep_alive so Ollama's server default (OLLAMA_KEEP_ALIVE) applies.",
+					"info",
+				);
+			} else {
+				ctx.ui.notify(
+					`keep_alive set to ${newValue}. Applies to the next /api/chat request and persists across pi launches.`,
 					"info",
 				);
 			}

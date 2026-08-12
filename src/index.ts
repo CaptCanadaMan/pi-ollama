@@ -11,6 +11,11 @@
 //
 // Environment variables:
 //   OLLAMA_HOST                  — Ollama server host[:port]. Default: localhost:11434
+//   OLLAMA_KEEP_ALIVE            — keep_alive sent on /api/chat requests. Accepts
+//                                  Ollama values: "5m", "1h", seconds, -1 (keep
+//                                  forever), 0 (unload). Unset → field omitted so
+//                                  the server default applies. Superseded by any
+//                                  value set via /ollama-keep-alive.
 //   OLLAMA_NATIVE_DEBUG          — Set to "1" to enable debug logging (writes to a file)
 //   OLLAMA_NATIVE_DEBUG_LOG      — Override default log path
 //                                  (default: ~/.pi/agent/cache/pi-ollama-debug.log)
