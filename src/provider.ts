@@ -186,6 +186,48 @@ export function shouldFlagSwallowedToolCall(s: SwallowSignals): boolean {
 // Main streaming function
 // ============================================================================
 
+export interface ChatBodyInputs {
+	modelId: string;
+	messages: OllamaRequest["messages"];
+	options: OllamaRequest["options"];
+	/** Resolved keep_alive override, or undefined = omit the field (server decides). */
+	keepAlive: string | number | undefined;
+	/** Whether the model supports thinking — Ollama rejects `think` otherwise. */
+	reasoningCapable: boolean;
+	/** pi's reasoning level for this turn (absent = thinking off). */
+	reasoningLevel: string | undefined;
+	/** Already-converted tool definitions, or undefined to omit. */
+	tools: OllamaRequest["tools"] | undefined;
+}
+
+/**
+ * Build the exact /api/chat request body. Pure — extracted from streamOllama
+ * so the wire contract is unit-testable (adopted from PR #6's test approach):
+ * the conditional fields must be KEY-ABSENT when off, not undefined-valued.
+ * In particular keep_alive: a per-request value OVERRIDES the server's
+ * OLLAMA_KEEP_ALIVE, so the honest default is to omit it entirely (gh#5).
+ */
+export function buildChatRequestBody(inputs: ChatBodyInputs): OllamaRequest {
+	const body: OllamaRequest = {
+		model: inputs.modelId,
+		messages: inputs.messages,
+		stream: true,
+		options: inputs.options,
+	};
+	if (inputs.keepAlive !== undefined) {
+		body.keep_alive = inputs.keepAlive;
+	}
+	// Only sent for thinking-capable models; Ollama rejects `think` on models
+	// without thinking support.
+	if (inputs.reasoningCapable) {
+		body.think = resolveThink(inputs.reasoningLevel);
+	}
+	if (inputs.tools !== undefined) {
+		body.tools = inputs.tools;
+	}
+	return body;
+}
+
 export function streamOllama(
 	model: PiModel,
 	context: PiContext,
@@ -242,29 +284,18 @@ export function streamOllama(
 				requestOptions.num_predict = options.maxTokens;
 			}
 
-			let body: OllamaRequest = {
-				model: model.id,
+			let body: OllamaRequest = buildChatRequestBody({
+				modelId: model.id,
 				messages,
-				stream: true,
 				options: requestOptions,
-			};
-
-			// keep_alive only when the user configured one — a per-request value
-			// OVERRIDES the server's OLLAMA_KEEP_ALIVE, so the honest default is
-			// to omit the field and let the server decide (gh#5).
-			if (settings.keepAlive !== undefined) {
-				body.keep_alive = settings.keepAlive;
-			}
-
-			// Only sent for thinking-capable models; Ollama rejects `think` on
-			// models without thinking support.
-			if (model.reasoning) {
-				body.think = resolveThink(options?.reasoning);
-			}
-
-			if (context.tools && context.tools.length > 0) {
-				body.tools = convertTools(context.tools);
-			}
+				keepAlive: settings.keepAlive,
+				reasoningCapable: Boolean(model.reasoning),
+				reasoningLevel: options?.reasoning,
+				tools:
+					context.tools && context.tools.length > 0
+						? convertTools(context.tools)
+						: undefined,
+			});
 
 			// Allow callers to inspect or replace the request body.
 			if (options?.onPayload) {
