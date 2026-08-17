@@ -23,6 +23,8 @@ const CONFIG_PATH = join(
 export interface PersistedConfig {
 	/** User-set context length override (set via /ollama-context). */
 	contextLength?: number;
+	/** User-set keep_alive override (set via /ollama-keep-alive). Absent = defer to the server. */
+	keepAlive?: string | number;
 }
 
 export function loadPersistedConfig(): PersistedConfig {

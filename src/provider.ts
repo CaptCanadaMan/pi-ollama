@@ -80,7 +80,6 @@ interface EventStream {
 // ============================================================================
 
 const DEFAULT_NUM_CTX = 32768;
-const DEFAULT_KEEP_ALIVE = "5m";
 
 // ============================================================================
 // Ghost-token detection
@@ -248,8 +247,14 @@ export function streamOllama(
 				messages,
 				stream: true,
 				options: requestOptions,
-				keep_alive: settings.keepAlive ?? DEFAULT_KEEP_ALIVE,
 			};
+
+			// keep_alive only when the user configured one — a per-request value
+			// OVERRIDES the server's OLLAMA_KEEP_ALIVE, so the honest default is
+			// to omit the field and let the server decide (gh#5).
+			if (settings.keepAlive !== undefined) {
+				body.keep_alive = settings.keepAlive;
+			}
 
 			// Only sent for thinking-capable models; Ollama rejects `think` on
 			// models without thinking support.

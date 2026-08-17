@@ -87,6 +87,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 | `/ollama-refresh` | Re-discover models from `/api/tags` + `/api/show` and re-register the provider. Useful after `ollama pull <model>`. |
 | `/ollama-info [model-id]` | Show capability details for a model. Omit the argument to pick from a list of currently registered models. |
 | `/ollama-context` | Set the context length (`num_ctx`) pi-ollama sends to `/api/chat`. Picker with common presets + custom input. Persists across pi launches. |
+| `/ollama-keep-alive` | Set the `keep_alive` pi-ollama sends to `/api/chat`, or (the default) send none and let the Ollama server's own setting decide. Picker with presets + custom input. Persists across pi launches. |
 
 ---
 
@@ -96,6 +97,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 |---|---|---|
 | `OLLAMA_HOST` | `localhost:11434` | Ollama server host[:port]. May include or omit protocol. |
 | `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` if used. |
+| `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** — a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by `/ollama-keep-alive` if used. |
 | `OLLAMA_NATIVE_DEBUG` | unset | Set to `1` to enable per-chunk debug logging. Writes to a **file** (see below) — not stderr, since stderr writes corrupt pi's TUI rendering. |
 | `OLLAMA_NATIVE_DEBUG_LOG` | `~/.pi/agent/cache/pi-ollama-debug.log` | Override the default debug log path. |
 | `OLLAMA_NATIVE_DUMP_DIR` | unset | If set, writes paired `req-*.json` / `res-*.ndjson` files per request — exact replay artifacts for diagnostics. |
