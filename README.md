@@ -69,6 +69,7 @@ You should see something like:
 
 ```
 Ollama base URL: http://localhost:11434
+keep_alive: defer to server (default)
 ✓ Ollama reachable — 3 model(s) registered
   qwen2.5-coder:7b               ctx:131,072  [tools]
   gemma4:26b                     ctx:262,144  [tools, vision, reasoning]
@@ -156,9 +157,9 @@ For vision-capable models, images pass through from **both** user messages and *
 
 ## Compatibility
 
-- **pi**: Tested against `@earendil-works/pi-coding-agent` v0.75.x. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`).
+- **pi**: Developed and tested against `@earendil-works/pi-coding-agent` v0.82.x; verified in daily use through v0.84.x. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`).
 - **Ollama**: Requires Ollama with `/api/chat` support (most versions). `/api/ps` is used opportunistically and tolerates older versions that don't expose it.
-- **Node**: Requires Node 22.19+ (matches pi-coding-agent 0.75.0's minimum).
+- **Node**: Requires Node 22.19+.
 
 ---
 
@@ -167,6 +168,19 @@ For vision-capable models, images pass through from **both** user messages and *
 The extension registers an `ollama` provider with a custom `streamSimple` handler. Pi calls `streamSimple(model, context, options)` for every turn; the handler converts pi's internal message format to Ollama's `/api/chat` wire format, opens an NDJSON stream, parses chunks into pi's `AssistantMessageEventStream` events (text deltas, thinking deltas, tool-call bursts, done), and surfaces errors with explanatory messages. No core pi changes required — `streamSimple` fully replaces the built-in handler for the registered API string.
 
 See [src/](./src/) for the implementation. Each file has a header comment explaining its role.
+
+---
+
+## Development
+
+```bash
+npm install
+npm test         # vitest - the pure seams: message conversion, request-body building,
+                 # keep_alive resolution, thinking mapping, the swallow-guard heuristics
+npm run check    # tsc --noEmit
+```
+
+No build step - pi loads the TypeScript source directly. Both commands should pass clean before any PR; the test suite grows one construct at a time, so a behavior fix should arrive with the test that would have caught it. Issues and PRs welcome - a couple of the recent fixes started as community reports, and that's exactly how this is supposed to work.
 
 ---
 
