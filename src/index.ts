@@ -22,6 +22,11 @@ import { discoverModels, loadCache, type DiscoveredModel } from "./discovery.js"
 import { streamOllama } from "./provider.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
+// Register the ollama-native streamSimple in the pi-ai api-provider registry as
+// well, so pi-agent-core lookups (subagents, pi-omplike-advisor) resolve it via
+// getApiProvider(model.api). pi.registerProvider alone only feeds the
+// pi-coding-agent composer's extension layer.
+import { registerApiProvider, type AssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
 
 // ============================================================================
 // Minimal structural interfaces for the pi extension API.
@@ -168,6 +173,34 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 				),
 			models: currentModels.map((m) => toProviderModel(m, settings)),
 		});
+		// Mirror the same streamSimple into the pi-ai api registry so
+		// pi-agent-core streamSimple lookups (subagents, advisor) resolve it.
+		// Tolerate older pi-ai without registerApiProvider.
+		try {
+			registerApiProvider(
+				{
+					api: "ollama-native",
+					streamSimple: (
+						model: Parameters<typeof streamOllama>[0],
+						context: Parameters<typeof streamOllama>[1],
+						options: Parameters<typeof streamOllama>[2],
+					) =>
+						streamOllama(
+							model as Parameters<typeof streamOllama>[0],
+							context as Parameters<typeof streamOllama>[1],
+							options as Parameters<typeof streamOllama>[2],
+							settings,
+							StreamClass,
+						) as unknown as AssistantMessageEventStream,
+				} as unknown as Parameters<typeof registerApiProvider>[0],
+				"pi-ollama",
+			);
+		} catch (e) {
+			process.stderr.write(
+				`[pi-ollama] registerApiProvider failed (${String(e)}). ` +
+					`pi-agent-core consumers (subagents, advisor) may not resolve ollama models.\n`,
+			);
+		}
 		providerRegistered = true;
 	};
 
