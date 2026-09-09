@@ -5,15 +5,50 @@
 // OLLAMA_CONTEXT_LENGTH       — User-set context length override (also Ollama's own
 //                                env var, honored for cross-tool consistency).
 //                                Superseded by any slash-command-set persisted value.
-// OLLAMA_KEEP_ALIVE           — keep_alive for /api/chat requests (also Ollama's own
+// OLLAMA_KEEP_ALIVE           - keep_alive for /api/chat requests (also Ollama's own
 //                                env var, honored for cross-tool consistency).
 //                                Superseded by any slash-command-set persisted value.
 //                                Unset (default): the field is OMITTED from requests
-//                                and the server's own setting decides (gh#5 — a
+//                                and the server's own setting decides (gh#5 - a
 //                                per-request keep_alive overrides the server, so the
 //                                old hardcoded "5m" defeated server-side keep-warm).
+// OLLAMA_TOP_P / OLLAMA_TOP_K / OLLAMA_REPEAT_PENALTY / OLLAMA_MIN_P /
+// OLLAMA_PRESENCE_PENALTY / OLLAMA_FREQUENCY_PENALTY / OLLAMA_SEED
+//                             - extra Ollama /api/chat `options` sampling params
+//                                (temperature already flows through from pi's own
+//                                per-turn options; these are not exposed by pi core,
+//                                so they're sourced from env vars instead, same
+//                                resolution style as OLLAMA_CONTEXT_LENGTH). Unset
+//                                (default) or unparseable = field omitted, Ollama's
+//                                own Modelfile/server default applies.
 
 import { loadPersistedConfig } from "./config.js";
+
+export function envFloat(name: string): number | undefined {
+	const raw = process.env[name];
+	if (!raw) return undefined;
+	const n = Number.parseFloat(raw);
+	if (!Number.isFinite(n)) {
+		process.stderr.write(
+			`[pi-ollama] Ignoring invalid ${name}=${JSON.stringify(raw)} (expected a number).\n`,
+		);
+		return undefined;
+	}
+	return n;
+}
+
+export function envInt(name: string): number | undefined {
+	const raw = process.env[name];
+	if (!raw) return undefined;
+	const n = Number.parseInt(raw, 10);
+	if (!Number.isFinite(n)) {
+		process.stderr.write(
+			`[pi-ollama] Ignoring invalid ${name}=${JSON.stringify(raw)} (expected an integer).\n`,
+		);
+		return undefined;
+	}
+	return n;
+}
 
 export interface OllamaExtensionSettings {
 	/** Base URL of the Ollama server, e.g. http://localhost:11434 */
@@ -43,6 +78,14 @@ export interface OllamaExtensionSettings {
 	 * config file so changes survive restart.
 	 */
 	contextLength?: number;
+	/** Extra Ollama /api/chat `options` sampling params, from env vars (see above). */
+	topP?: number;
+	topK?: number;
+	repeatPenalty?: number;
+	minP?: number;
+	presencePenalty?: number;
+	frequencyPenalty?: number;
+	seed?: number;
 }
 
 // Go-style duration: one or more number+unit groups ("5m", "1h30m", "500ms").
@@ -88,9 +131,7 @@ export function resolveKeepAlive(
 export function loadSettings(): OllamaExtensionSettings {
 	// OLLAMA_HOST may be bare "host:port" or already include a protocol.
 	const rawHost = process.env.OLLAMA_HOST ?? "localhost:11434";
-	const baseUrl = rawHost.startsWith("http")
-		? rawHost
-		: `http://${rawHost}`;
+	const baseUrl = rawHost.startsWith("http") ? rawHost : `http://${rawHost}`;
 
 	const rawRetries = process.env.OLLAMA_NATIVE_GHOST_RETRIES;
 	const ghostRetries = (() => {
@@ -113,9 +154,19 @@ export function loadSettings(): OllamaExtensionSettings {
 
 	return {
 		baseUrl: baseUrl.replace(/\/+$/, ""),
-		keepAlive: resolveKeepAlive(persisted.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
+		keepAlive: resolveKeepAlive(
+			persisted.keepAlive,
+			process.env.OLLAMA_KEEP_ALIVE,
+		),
 		numCtx: 32768,
 		ghostRetries,
 		contextLength,
+		topP: envFloat("OLLAMA_TOP_P"),
+		topK: envInt("OLLAMA_TOP_K"),
+		repeatPenalty: envFloat("OLLAMA_REPEAT_PENALTY"),
+		minP: envFloat("OLLAMA_MIN_P"),
+		presencePenalty: envFloat("OLLAMA_PRESENCE_PENALTY"),
+		frequencyPenalty: envFloat("OLLAMA_FREQUENCY_PENALTY"),
+		seed: envInt("OLLAMA_SEED"),
 	};
 }

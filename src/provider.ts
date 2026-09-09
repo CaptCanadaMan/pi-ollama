@@ -201,7 +201,55 @@ export interface ChatBodyInputs {
 }
 
 /**
- * Build the exact /api/chat request body. Pure — extracted from streamOllama
+ * Build the /api/chat `options` object. Pure - extracted from streamOllama so
+ * the sampling-param merge is unit-testable. `settings.*` fields are env-var
+ * sourced (OLLAMA_TOP_P etc., see settings.ts) and, like keep_alive, must be
+ * KEY-ABSENT when unset - not undefined-valued - so Ollama's own
+ * Modelfile/server default applies rather than a wire-level null override.
+ */
+export function buildRequestOptions(
+	numCtx: number,
+	turnOptions:
+		| Pick<PiSimpleStreamOptions, "temperature" | "maxTokens">
+		| undefined,
+	settings: Pick<
+		OllamaExtensionSettings,
+		| "topP"
+		| "topK"
+		| "repeatPenalty"
+		| "minP"
+		| "presencePenalty"
+		| "frequencyPenalty"
+		| "seed"
+	>,
+): NonNullable<OllamaRequest["options"]> {
+	const requestOptions: NonNullable<OllamaRequest["options"]> = {
+		num_ctx: numCtx,
+	};
+	if (turnOptions?.temperature !== undefined) {
+		requestOptions.temperature = turnOptions.temperature;
+	}
+	if (turnOptions?.maxTokens !== undefined) {
+		requestOptions.num_predict = turnOptions.maxTokens;
+	}
+	// Extra sampling params not exposed by pi core - env-var sourced
+	// (see settings.ts). Omitted entirely when unset, so Ollama's own
+	// Modelfile/server default applies.
+	if (settings.topP !== undefined) requestOptions.top_p = settings.topP;
+	if (settings.topK !== undefined) requestOptions.top_k = settings.topK;
+	if (settings.repeatPenalty !== undefined)
+		requestOptions.repeat_penalty = settings.repeatPenalty;
+	if (settings.minP !== undefined) requestOptions.min_p = settings.minP;
+	if (settings.presencePenalty !== undefined)
+		requestOptions.presence_penalty = settings.presencePenalty;
+	if (settings.frequencyPenalty !== undefined)
+		requestOptions.frequency_penalty = settings.frequencyPenalty;
+	if (settings.seed !== undefined) requestOptions.seed = settings.seed;
+	return requestOptions;
+}
+
+/**
+ * Build the exact /api/chat request body. Pure - extracted from streamOllama
  * so the wire contract is unit-testable (adopted from PR #6's test approach):
  * the conditional fields must be KEY-ABSENT when off, not undefined-valued.
  * In particular keep_alive: a per-request value OVERRIDES the server's
@@ -276,13 +324,7 @@ export function streamOllama(
 			// the same effective value. See toProviderModel for resolution.
 			const numCtx = model.contextWindow ?? settings.numCtx ?? DEFAULT_NUM_CTX;
 
-			const requestOptions: OllamaRequest["options"] = { num_ctx: numCtx };
-			if (options?.temperature !== undefined) {
-				requestOptions.temperature = options.temperature;
-			}
-			if (options?.maxTokens !== undefined) {
-				requestOptions.num_predict = options.maxTokens;
-			}
+			const requestOptions = buildRequestOptions(numCtx, options, settings);
 
 			let body: OllamaRequest = buildChatRequestBody({
 				modelId: model.id,
@@ -344,8 +386,13 @@ export function streamOllama(
 
 				if (options?.onResponse) {
 					const hdrs: Record<string, string> = {};
-					response.headers.forEach((v, k) => { hdrs[k] = v; });
-					await options.onResponse({ status: response.status, headers: hdrs }, model);
+					response.headers.forEach((v, k) => {
+						hdrs[k] = v;
+					});
+					await options.onResponse(
+						{ status: response.status, headers: hdrs },
+						model,
+					);
 				}
 
 				dbg("response-status", {
@@ -446,7 +493,12 @@ export function streamOllama(
 			type Block =
 				| { type: "text"; text: string }
 				| { type: "thinking"; thinking: string }
-				| { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+				| {
+						type: "toolCall";
+						id: string;
+						name: string;
+						arguments: Record<string, unknown>;
+				  };
 
 			const blocks = output.content as Block[];
 			let currentBlock: Block | null = null;
@@ -578,13 +630,9 @@ export function streamOllama(
 								const providedId = wireTc.id;
 								const isDuplicate =
 									providedId !== undefined &&
-									blocks.some(
-										(b) => b.type === "toolCall" && b.id === providedId,
-									);
+									blocks.some((b) => b.type === "toolCall" && b.id === providedId);
 								const id =
-									!providedId || isDuplicate
-										? generateToolCallId()
-										: providedId;
+									!providedId || isDuplicate ? generateToolCallId() : providedId;
 
 								const toolCall: Block & { type: "toolCall" } = {
 									type: "toolCall",
@@ -697,9 +745,11 @@ export function streamOllama(
 			// Post-stream ghost check: eval_count > 0 but nothing visible arrived.
 			const hasMeaningfulContent = blocks.some(
 				(b) =>
-					(b.type === "text" && (b as { type: "text"; text: string }).text.trim().length > 0) ||
+					(b.type === "text" &&
+						(b as { type: "text"; text: string }).text.trim().length > 0) ||
 					(b.type === "thinking" &&
-						(b as { type: "thinking"; thinking: string }).thinking.trim().length > 0) ||
+						(b as { type: "thinking"; thinking: string }).thinking.trim().length >
+							0) ||
 					b.type === "toolCall",
 			);
 			const outputTokens = (output.usage as Record<string, number>).output ?? 0;
