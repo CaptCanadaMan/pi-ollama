@@ -55,6 +55,13 @@ export interface OllamaRequest {
 		num_ctx?: number;
 		temperature?: number;
 		num_predict?: number;
+		top_p?: number;
+		top_k?: number;
+		repeat_penalty?: number;
+		min_p?: number;
+		presence_penalty?: number;
+		frequency_penalty?: number;
+		seed?: number;
 	};
 	keep_alive?: string | number;
 	format?: string | object;

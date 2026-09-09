@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { parseKeepAlive, resolveKeepAlive } from "../src/settings.js";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+	envFloat,
+	envInt,
+	parseKeepAlive,
+	resolveKeepAlive,
+} from "../src/settings.js";
 
 // keep_alive semantics (gh#5): a per-request keep_alive OVERRIDES the Ollama
 // server's OLLAMA_KEEP_ALIVE, so the old hardcoded "5m" silently defeated any
@@ -50,5 +55,58 @@ describe("resolveKeepAlive — persisted → env → defer-to-server", () => {
 
 	it("an invalid env value resolves to undefined (defer), never a fallback constant", () => {
 		expect(resolveKeepAlive(undefined, "banana")).toBeUndefined();
+	});
+});
+
+// Extra Ollama /api/chat sampling params (OLLAMA_TOP_P etc.): unset or
+// unparseable = field omitted, Ollama's own Modelfile/server default applies.
+describe("envFloat / envInt - sampling-param env var parsing", () => {
+	const ENV_VAR = "OLLAMA_TEST_SAMPLING_PARAM";
+
+	afterEach(() => {
+		delete process.env[ENV_VAR];
+	});
+
+	it("envFloat returns undefined when unset", () => {
+		expect(envFloat(ENV_VAR)).toBeUndefined();
+	});
+
+	it("envFloat parses a valid float", () => {
+		process.env[ENV_VAR] = "0.9";
+		expect(envFloat(ENV_VAR)).toBe(0.9);
+	});
+
+	it("envFloat parses a valid integer as a float", () => {
+		process.env[ENV_VAR] = "42";
+		expect(envFloat(ENV_VAR)).toBe(42);
+	});
+
+	it("envFloat returns undefined for garbage (defer to server default)", () => {
+		process.env[ENV_VAR] = "banana";
+		expect(envFloat(ENV_VAR)).toBeUndefined();
+	});
+
+	it("envInt returns undefined when unset", () => {
+		expect(envInt(ENV_VAR)).toBeUndefined();
+	});
+
+	it("envInt parses a valid integer", () => {
+		process.env[ENV_VAR] = "42";
+		expect(envInt(ENV_VAR)).toBe(42);
+	});
+
+	it("envInt truncates a float string via parseInt semantics", () => {
+		process.env[ENV_VAR] = "3.7";
+		expect(envInt(ENV_VAR)).toBe(3);
+	});
+
+	it("envInt returns undefined for garbage (defer to server default)", () => {
+		process.env[ENV_VAR] = "banana";
+		expect(envInt(ENV_VAR)).toBeUndefined();
+	});
+
+	it("accepts a negative seed", () => {
+		process.env[ENV_VAR] = "-1";
+		expect(envInt(ENV_VAR)).toBe(-1);
 	});
 });
