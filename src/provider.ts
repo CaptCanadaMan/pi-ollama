@@ -24,61 +24,75 @@ import { convertMessages, convertTools } from "./convert.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 
-/**
- * ============================================================================
- * Live tok/s progress file for status-line-pi.js
- * ============================================================================
- *
- * pi core's own context_window.total_output_tokens only reflects a fully
- * COMPLETED, persisted assistant message (confirmed 2026-09-09 by reading
- * pi's bundled cli.js: getLastAssistantUsage() skips any message still
- * streaming) - it never grows mid-turn, so status-line-pi.js's delta-across-
- * renders tok/s calc can never get a valid positive sample for a typical
- * fast, single-shot local Ollama turn (it completes before two renders can
- * straddle it). This module is the only place with a genuinely live signal
- * (every NDJSON chunk as it streams), so it writes a small progress file the
- * status line reads directly instead - throttled to avoid hammering disk on
- * every chunk (local streams run ~20-100 chunks/sec).
- */
-const LIVE_PROGRESS_FILE = join(homedir(), ".pi", "agent", "cache", "pi-ollama-live-progress.json");
+// Live tok/s signal for status-line-pi.js. pi core's own token counters
+// only update once an assistant message is fully complete, never mid-turn,
+// so a fast local turn finishes before the status line can observe a delta.
+// This is the only place with a live per-chunk signal, so it writes a small
+// file the status line reads directly. Throttled to avoid a disk write on
+// every chunk (local streams run ~20-100 chunks/sec).
+const LIVE_PROGRESS_FILE = join(
+	homedir(),
+	".pi",
+	"agent",
+	"cache",
+	"pi-ollama-live-progress.json",
+);
 const LIVE_PROGRESS_WRITE_INTERVAL_MS = 150;
 let lastLiveProgressWriteTs = 0;
 
-function writeLiveProgress(modelId: string, chunksReceived: number, force = false): void {
+export function writeLiveProgress(
+	modelId: string,
+	chunksReceived: number,
+	force = false,
+): void {
 	const now = Date.now();
-	if (!force && now - lastLiveProgressWriteTs < LIVE_PROGRESS_WRITE_INTERVAL_MS) return;
+	if (!force && now - lastLiveProgressWriteTs < LIVE_PROGRESS_WRITE_INTERVAL_MS)
+		return;
 	lastLiveProgressWriteTs = now;
 	try {
-		writeFileSync(LIVE_PROGRESS_FILE, JSON.stringify({ ts: now, modelId, chunksReceived }));
+		writeFileSync(
+			LIVE_PROGRESS_FILE,
+			JSON.stringify({ ts: now, modelId, chunksReceived }),
+		);
 	} catch {
 		// Best-effort - a failed write just means the status line falls back
 		// to its existing (non-live) tok/s path for this turn.
 	}
 }
 
-/**
- * Persisted "last completed turn" average, so the status line has something
- * to show once a turn finishes and the live-progress file above goes stale
- * (2026-09-09: the live figure was disappearing within ~1-2s of a turn
- * ending, well before the user's eyes could catch it) - not throttled,
- * written once per turn from real Ollama-reported eval_count/eval_duration
- * (nanoseconds), which is more precise than the chunk-counting proxy above.
- */
-const LAST_TURN_FILE = join(homedir(), ".pi", "agent", "cache", "pi-ollama-last-turn.json");
+// Persisted average for the last completed turn, so the status line still
+// has something to show once the live-progress file above goes stale.
+// Computed from Ollama's own eval_count/eval_duration - more precise than
+// the chunk-counting proxy above.
+const LAST_TURN_FILE = join(
+	homedir(),
+	".pi",
+	"agent",
+	"cache",
+	"pi-ollama-last-turn.json",
+);
 
-function writeLastTurnSummary(modelId: string, tokens: number, evalDurationNs: number): void {
+export function writeLastTurnSummary(
+	modelId: string,
+	tokens: number,
+	evalDurationNs: number,
+): void {
 	if (tokens <= 0 || evalDurationNs <= 0) return;
 	try {
 		writeFileSync(
 			LAST_TURN_FILE,
-			JSON.stringify({ ts: Date.now(), modelId, tokens, avgTokPerSec: tokens / (evalDurationNs / 1e9) }),
+			JSON.stringify({
+				ts: Date.now(),
+				modelId,
+				tokens,
+				avgTokPerSec: tokens / (evalDurationNs / 1e9),
+			}),
 		);
 	} catch {
 		// Best-effort - a failed write just means the status line has no
 		// persisted average to fall back on after this turn.
 	}
 }
-
 
 // ============================================================================
 // Types — minimal structural interfaces that match pi-ai's shapes.
@@ -403,8 +417,13 @@ export function streamOllama(
 
 				if (options?.onResponse) {
 					const hdrs: Record<string, string> = {};
-					response.headers.forEach((v, k) => { hdrs[k] = v; });
-					await options.onResponse({ status: response.status, headers: hdrs }, model);
+					response.headers.forEach((v, k) => {
+						hdrs[k] = v;
+					});
+					await options.onResponse(
+						{ status: response.status, headers: hdrs },
+						model,
+					);
 				}
 
 				dbg("response-status", {
@@ -505,7 +524,12 @@ export function streamOllama(
 			type Block =
 				| { type: "text"; text: string }
 				| { type: "thinking"; thinking: string }
-				| { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+				| {
+						type: "toolCall";
+						id: string;
+						name: string;
+						arguments: Record<string, unknown>;
+				  };
 
 			const blocks = output.content as Block[];
 			let currentBlock: Block | null = null;
@@ -638,13 +662,9 @@ export function streamOllama(
 								const providedId = wireTc.id;
 								const isDuplicate =
 									providedId !== undefined &&
-									blocks.some(
-										(b) => b.type === "toolCall" && b.id === providedId,
-									);
+									blocks.some((b) => b.type === "toolCall" && b.id === providedId);
 								const id =
-									!providedId || isDuplicate
-										? generateToolCallId()
-										: providedId;
+									!providedId || isDuplicate ? generateToolCallId() : providedId;
 
 								const toolCall: Block & { type: "toolCall" } = {
 									type: "toolCall",
@@ -758,9 +778,11 @@ export function streamOllama(
 			// Post-stream ghost check: eval_count > 0 but nothing visible arrived.
 			const hasMeaningfulContent = blocks.some(
 				(b) =>
-					(b.type === "text" && (b as { type: "text"; text: string }).text.trim().length > 0) ||
+					(b.type === "text" &&
+						(b as { type: "text"; text: string }).text.trim().length > 0) ||
 					(b.type === "thinking" &&
-						(b as { type: "thinking"; thinking: string }).thinking.trim().length > 0) ||
+						(b as { type: "thinking"; thinking: string }).thinking.trim().length >
+							0) ||
 					b.type === "toolCall",
 			);
 			const outputTokens = (output.usage as Record<string, number>).output ?? 0;

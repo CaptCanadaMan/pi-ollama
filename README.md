@@ -184,17 +184,15 @@ No build step - pi loads the TypeScript source directly. Both commands should pa
 
 ---
 
-## Live tok/s progress
+## Live tok/s signal files
 
-When pi-ollama is active, it writes two persistent files that status-line-pi.js reads to show real-time tokens-per-second during and after each turn:
+pi core's own token counters only update once an assistant message is fully complete - they never grow mid-turn, so a fast local Ollama turn finishes before anything watching for a delta can observe one. To give an external status line (or any other tool) a genuine real-time signal, the provider writes two small JSON files as a side effect of streaming:
 
-- `~/.pi/agent/cache/pi-ollama-live-progress.json` — a small file overwritten every ~150ms during a streaming turn, containing the model ID and chunks received so far. This provides a live, volatile tok/s reading that disappears once the turn ends (by design, showing a frozen mid-generation rate would be misleading).
+- `~/.pi/agent/cache/pi-ollama-live-progress.json` - overwritten every ~150ms while a turn streams, with the model ID and chunks received so far. Volatile by design: it goes stale as soon as the turn ends, since a frozen mid-generation rate would be misleading if left on screen.
 
-- `~/.pi/agent/cache/pi-ollama-last-turn.json` — written once per completed turn from Ollama's own `eval_count`/`eval_duration` nanosecond timestamps. This provides a persisted average tok/s figure that remains on screen after the turn finishes, so the user has something to reference between turns.
+- `~/.pi/agent/cache/pi-ollama-last-turn.json` - written once per completed turn from Ollama's own `eval_count`/`eval_duration`, giving a precise average tok/s to reference between turns.
 
-These files are written best-effort; a failed write simply means the status line falls back to its existing tok/s path. The files are ephemeral and may be cleaned up between pi launches.
-
-Both files are written by the provider module (`src/provider.ts`) automatically — no additional configuration is required.
+Writes are best-effort and silently no-op on failure - there's no consumer built into this extension, so nothing breaks if the files are never read. No configuration is required or available; this is always-on.
 
 ---
 
