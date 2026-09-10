@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseKeepAlive, resolveKeepAlive } from "../src/settings.js";
+import {
+	parseKeepAlive,
+	resolveContextWindow,
+	resolveKeepAlive,
+} from "../src/settings.js";
 
 // keep_alive semantics (gh#5): a per-request keep_alive OVERRIDES the Ollama
 // server's OLLAMA_KEEP_ALIVE, so the old hardcoded "5m" silently defeated any
@@ -50,5 +54,79 @@ describe("resolveKeepAlive — persisted → env → defer-to-server", () => {
 
 	it("an invalid env value resolves to undefined (defer), never a fallback constant", () => {
 		expect(resolveKeepAlive(undefined, "banana")).toBeUndefined();
+	});
+});
+
+describe("resolveContextWindow - perModelContext -> contextLength -> capped default", () => {
+	it("uses the per-model override when present, ignoring contextLength and the cap", () => {
+		expect(
+			resolveContextWindow({
+				perModelContext: { "gemma4:12b": 65536 },
+				modelId: "gemma4:12b",
+				contextLength: 16384,
+				discoveredContextWindow: 131072,
+				numCtx: 32768,
+			}),
+		).toBe(65536);
+	});
+
+	it("falls through to contextLength when the model has no per-model entry", () => {
+		expect(
+			resolveContextWindow({
+				perModelContext: { "other-model:latest": 65536 },
+				modelId: "gemma4:12b",
+				contextLength: 16384,
+				discoveredContextWindow: 131072,
+				numCtx: 32768,
+			}),
+		).toBe(16384);
+	});
+
+	it("falls through to contextLength when perModelContext is entirely undefined", () => {
+		expect(
+			resolveContextWindow({
+				perModelContext: undefined,
+				modelId: "gemma4:12b",
+				contextLength: 16384,
+				discoveredContextWindow: 131072,
+				numCtx: 32768,
+			}),
+		).toBe(16384);
+	});
+
+	it("falls through to min(discovered, numCtx) when neither override is set", () => {
+		expect(
+			resolveContextWindow({
+				perModelContext: undefined,
+				modelId: "gemma4:12b",
+				contextLength: undefined,
+				discoveredContextWindow: 131072,
+				numCtx: 32768,
+			}),
+		).toBe(32768);
+	});
+
+	it("caps the default at the discovered window when it's smaller than numCtx", () => {
+		expect(
+			resolveContextWindow({
+				perModelContext: undefined,
+				modelId: "gemma4:12b",
+				contextLength: undefined,
+				discoveredContextWindow: 8192,
+				numCtx: 32768,
+			}),
+		).toBe(8192);
+	});
+
+	it("a per-model override of 0 is respected, not treated as falsy/unset", () => {
+		expect(
+			resolveContextWindow({
+				perModelContext: { "gemma4:12b": 0 },
+				modelId: "gemma4:12b",
+				contextLength: 16384,
+				discoveredContextWindow: 131072,
+				numCtx: 32768,
+			}),
+		).toBe(0);
 	});
 });

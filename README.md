@@ -83,7 +83,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 ## Slash commands
 
 | Command | Description |
-|---|---|
+| --- | --- |
 | `/ollama-status` | Show the Ollama base URL, registered models with capability flags, and currently loaded models. |
 | `/ollama-refresh` | Re-discover models from `/api/tags` + `/api/show` and re-register the provider. Useful after `ollama pull <model>`. |
 | `/ollama-info [model-id]` | Show capability details for a model. Omit the argument to pick from a list of currently registered models. |
@@ -95,7 +95,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 ## Environment variables
 
 | Variable | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `OLLAMA_HOST` | `localhost:11434` | Ollama server host[:port]. May include or omit protocol. |
 | `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` if used. |
 | `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** — a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by `/ollama-keep-alive` if used. |
@@ -104,13 +104,40 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 | `OLLAMA_NATIVE_DUMP_DIR` | unset | If set, writes paired `req-*.json` / `res-*.ndjson` files per request — exact replay artifacts for diagnostics. |
 | `OLLAMA_NATIVE_GHOST_RETRIES` | `2` | Max retries when Ollama returns ghost-token responses (see Reliability below). |
 
-**Context length and memory.** By default pi-ollama caps `num_ctx` at 32,768 tokens, even when the model's discovered context window is much larger (some models report 262,144 or more). Without the cap, Ollama would try to allocate enough memory for the full trained context, which exceeds typical hardware budgets. Users on machines with headroom for more can raise the cap via the `OLLAMA_CONTEXT_LENGTH` env var or `/ollama-context` slash command. The slash command persists across restarts; the env var is read at startup.
+**Context length and memory.** By default pi-ollama caps `num_ctx` at 32,768 tokens, even when the model's discovered context window is much larger (some models report 262,144 or more). Without the cap, Ollama would try to allocate enough memory for the full trained context, which exceeds typical hardware budgets. Users on machines with headroom for more can raise the cap via the `OLLAMA_CONTEXT_LENGTH` env var, the `/ollama-context` slash command, or per-model overrides (below). The slash command persists across restarts; the env var is read at startup.
 
 Live-tail the debug log from another terminal:
 
 ```bash
 tail -f ~/.pi/agent/cache/pi-ollama-debug.log
 ```
+
+---
+
+## Per-model context length overrides
+
+`OLLAMA_CONTEXT_LENGTH`/`/ollama-context` set one `num_ctx` ceiling for every model. If you regularly switch between models with very different context windows (e.g. a 65,536-token model and a 131,072-token model), that means re-running `/ollama-context` on every switch.
+
+`perModelContext` sets a ceiling per exact model id instead, taking priority over the global override. It's config-file-only - there's no slash command or env var for it, since it's inherently a multi-value table rather than a single setting. Hand-edit `~/.pi/agent/cache/pi-ollama-config.json`:
+
+```json
+{
+  "contextLength": 16384,
+  "perModelContext": {
+    "qwen2.5-coder:7b": 65536,
+    "gemma4:26b": 131072,
+    "llama3.1:8b": 49152
+  }
+}
+```
+
+Resolution order for the effective context window of a given model:
+
+1. **`perModelContext[model.id]`** - per-model override, if the current model has an entry
+2. **`contextLength`** - the global override (`/ollama-context` or `OLLAMA_CONTEXT_LENGTH`)
+3. **`min(discovered contextWindow, numCtx)`** - the default, capped at 32,768
+
+Settings are read once at extension load, so restart pi after editing the config file to pick up changes - `/ollama-refresh` re-discovers models but doesn't reload the config file.
 
 ---
 
@@ -128,6 +155,8 @@ On extension load, the provider:
 4. Caches the result for next startup.
 
 If Ollama is unreachable at startup, the cached list is used as a fallback. Run `/ollama-refresh` once it's available to re-discover.
+
+---
 
 ## Thinking control
 
@@ -148,6 +177,8 @@ Ollama's streaming has a few known edge cases. The provider handles them explici
 **Post-stream ghost check.** Belt-and-suspenders: if `eval_count > 0` but no content, thinking, or tool calls landed in the parsed stream, the provider raises an error rather than reporting a successful empty turn.
 
 **Swallowed-tool-call detection.** Ollama can buffer a tool call server-side, fail to parse it, and end the turn with no `tool_calls` on the wire — the model announces an action and then nothing happens (issue #3). The guard detects the generated≫streamed token gap and raises a retryable error instead of completing silently. It stands down on batched streams (Ollama Cloud emits ~30 tokens per NDJSON chunk vs ~1 locally), which previously false-positived the ratio heuristic on healthy cloud turns (issue #4).
+
+---
 
 ## Vision
 

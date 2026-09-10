@@ -43,6 +43,10 @@ export interface OllamaExtensionSettings {
 	 * config file so changes survive restart.
 	 */
 	contextLength?: number;
+	/**
+	 * Per-model num_ctx overrides, from the persisted config file. Takes priority over contextLength.
+	 */
+	perModelContext?: Record<string, number>;
 }
 
 // Go-style duration: one or more number+unit groups ("5m", "1h30m", "500ms").
@@ -85,12 +89,30 @@ export function resolveKeepAlive(
 	return parsed;
 }
 
+/**
+ * Resolve the effective num_ctx for a given model. Priority order:
+ *   1. perModelContext[modelId] - per-model override from the persisted config
+ *   2. contextLength - the old single global override (slash command or env var)
+ *   3. min(discoveredContextWindow, numCtx) - capped default
+ */
+export function resolveContextWindow(opts: {
+	perModelContext: Record<string, number> | undefined;
+	modelId: string;
+	contextLength: number | undefined;
+	discoveredContextWindow: number;
+	numCtx: number;
+}): number {
+	return (
+		opts.perModelContext?.[opts.modelId] ??
+		opts.contextLength ??
+		Math.min(opts.discoveredContextWindow, opts.numCtx)
+	);
+}
+
 export function loadSettings(): OllamaExtensionSettings {
 	// OLLAMA_HOST may be bare "host:port" or already include a protocol.
 	const rawHost = process.env.OLLAMA_HOST ?? "localhost:11434";
-	const baseUrl = rawHost.startsWith("http")
-		? rawHost
-		: `http://${rawHost}`;
+	const baseUrl = rawHost.startsWith("http") ? rawHost : `http://${rawHost}`;
 
 	const rawRetries = process.env.OLLAMA_NATIVE_GHOST_RETRIES;
 	const ghostRetries = (() => {
@@ -113,9 +135,13 @@ export function loadSettings(): OllamaExtensionSettings {
 
 	return {
 		baseUrl: baseUrl.replace(/\/+$/, ""),
-		keepAlive: resolveKeepAlive(persisted.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
+		keepAlive: resolveKeepAlive(
+			persisted.keepAlive,
+			process.env.OLLAMA_KEEP_ALIVE,
+		),
 		numCtx: 32768,
 		ghostRetries,
 		contextLength,
+		perModelContext: persisted.perModelContext,
 	};
 }
