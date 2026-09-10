@@ -124,9 +124,9 @@ tail -f ~/.pi/agent/cache/pi-ollama-debug.log
 {
   "contextLength": 16384,
   "perModelContext": {
-    "gpt-oss:latest": 65536,
-    "qwen3.6:latest": 131072,
-    "phi4-reasoning:latest": 49152
+    "qwen2.5-coder:7b": 65536,
+    "gemma4:26b": 131072,
+    "llama3.1:8b": 49152
   }
 }
 ```

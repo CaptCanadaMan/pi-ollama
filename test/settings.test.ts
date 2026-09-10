@@ -61,8 +61,8 @@ describe("resolveContextWindow - perModelContext -> contextLength -> capped defa
 	it("uses the per-model override when present, ignoring contextLength and the cap", () => {
 		expect(
 			resolveContextWindow({
-				perModelContext: { "gpt-oss:latest": 65536 },
-				modelId: "gpt-oss:latest",
+				perModelContext: { "gemma4:12b": 65536 },
+				modelId: "gemma4:12b",
 				contextLength: 16384,
 				discoveredContextWindow: 131072,
 				numCtx: 32768,
@@ -74,7 +74,7 @@ describe("resolveContextWindow - perModelContext -> contextLength -> capped defa
 		expect(
 			resolveContextWindow({
 				perModelContext: { "other-model:latest": 65536 },
-				modelId: "gpt-oss:latest",
+				modelId: "gemma4:12b",
 				contextLength: 16384,
 				discoveredContextWindow: 131072,
 				numCtx: 32768,
@@ -86,7 +86,7 @@ describe("resolveContextWindow - perModelContext -> contextLength -> capped defa
 		expect(
 			resolveContextWindow({
 				perModelContext: undefined,
-				modelId: "gpt-oss:latest",
+				modelId: "gemma4:12b",
 				contextLength: 16384,
 				discoveredContextWindow: 131072,
 				numCtx: 32768,
@@ -98,7 +98,7 @@ describe("resolveContextWindow - perModelContext -> contextLength -> capped defa
 		expect(
 			resolveContextWindow({
 				perModelContext: undefined,
-				modelId: "gpt-oss:latest",
+				modelId: "gemma4:12b",
 				contextLength: undefined,
 				discoveredContextWindow: 131072,
 				numCtx: 32768,
@@ -110,7 +110,7 @@ describe("resolveContextWindow - perModelContext -> contextLength -> capped defa
 		expect(
 			resolveContextWindow({
 				perModelContext: undefined,
-				modelId: "small-model:latest",
+				modelId: "gemma4:12b",
 				contextLength: undefined,
 				discoveredContextWindow: 8192,
 				numCtx: 32768,
@@ -121,8 +121,8 @@ describe("resolveContextWindow - perModelContext -> contextLength -> capped defa
 	it("a per-model override of 0 is respected, not treated as falsy/unset", () => {
 		expect(
 			resolveContextWindow({
-				perModelContext: { "gpt-oss:latest": 0 },
-				modelId: "gpt-oss:latest",
+				perModelContext: { "gemma4:12b": 0 },
+				modelId: "gemma4:12b",
 				contextLength: 16384,
 				discoveredContextWindow: 131072,
 				numCtx: 32768,
