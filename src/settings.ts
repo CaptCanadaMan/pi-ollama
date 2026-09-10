@@ -3,7 +3,7 @@
 // OLLAMA_HOST                 — Ollama server host[:port]. Default: localhost:11434
 // OLLAMA_NATIVE_GHOST_RETRIES — Max retries on ghost-token response. Default: 2
 // OLLAMA_CONTEXT_LENGTH       — User-set context length override (also Ollama's own
-//                                env var, honored for cross-tool compatibility).
+//                                env var, honored for cross-tool consistency).
 //                                Superseded by any slash-command-set persisted value.
 // OLLAMA_KEEP_ALIVE           — keep_alive for /api/chat requests (also Ollama's own
 //                                env var, honored for cross-tool consistency).
@@ -87,6 +87,26 @@ export function resolveKeepAlive(
 		);
 	}
 	return parsed;
+}
+
+/**
+ * Resolve the effective num_ctx for a given model. Priority order:
+ *   1. perModelContext[modelId] - per-model override from the persisted config
+ *   2. contextLength - the old single global override (slash command or env var)
+ *   3. min(discoveredContextWindow, numCtx) - capped default
+ */
+export function resolveContextWindow(opts: {
+	perModelContext: Record<string, number> | undefined;
+	modelId: string;
+	contextLength: number | undefined;
+	discoveredContextWindow: number;
+	numCtx: number;
+}): number {
+	return (
+		opts.perModelContext?.[opts.modelId] ??
+		opts.contextLength ??
+		Math.min(opts.discoveredContextWindow, opts.numCtx)
+	);
 }
 
 export function loadSettings(): OllamaExtensionSettings {

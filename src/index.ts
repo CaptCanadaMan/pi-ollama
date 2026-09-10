@@ -17,7 +17,11 @@
 //   OLLAMA_NATIVE_DUMP_DIR       — Path to write req/res dump files for diagnostics
 //   OLLAMA_NATIVE_GHOST_RETRIES  — Ghost-token retry count. Default: 2
 
-import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
+import {
+	loadSettings,
+	resolveContextWindow,
+	type OllamaExtensionSettings,
+} from "./settings.js";
 import {
 	discoverModels,
 	loadCache,
@@ -199,14 +203,14 @@ function toProviderModel(
 ): ProviderModel {
 	// The registered contextWindow drives both the wire request (num_ctx) AND
 	// pi's UI context-usage counter. Compute the effective value once here so
-	// both views stay consistent. Resolution:
-	//   1. settings.perModelContext[m.id] — per-model override if set
-	//   2. settings.contextLength — user override (slash command or env var)
-	//   3. min(discovered window, settings.numCtx) — capped default
-	const effectiveContextWindow =
-		settings.perModelContext?.[m.id] ??
-		settings.contextLength ??
-		Math.min(m.contextWindow, settings.numCtx);
+	// both views stay consistent - see resolveContextWindow for the priority order.
+	const effectiveContextWindow = resolveContextWindow({
+		perModelContext: settings.perModelContext,
+		modelId: m.id,
+		contextLength: settings.contextLength,
+		discoveredContextWindow: m.contextWindow,
+		numCtx: settings.numCtx,
+	});
 	return {
 		id: m.id,
 		name: m.name,

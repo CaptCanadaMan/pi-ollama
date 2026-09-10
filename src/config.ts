@@ -23,14 +23,15 @@ const CONFIG_PATH = join(
 export interface PersistedConfig {
 	/** User-set context length override (set via /ollama-context). */
 	contextLength?: number;
-	/** Per-model num_ctx overrides, keyed by exact model id (e.g. "gpt-oss:latest").
+	/** User-set keep_alive override (set via /ollama-keep-alive). Absent = defer to the server. */
+	keepAlive?: string | number;
+	/**
+	 * Per-model num_ctx overrides, keyed by exact model id (e.g. "gpt-oss:latest").
 	 * Takes priority over `contextLength` (the old single global override) and
-	 * the `min(discovered, numCtx)` capped default - see toProviderModel in
-	 * index.ts. Hand-edited in this file; no slash command manages it (unlike
+	 * the `min(discovered, numCtx)` capped default - see resolveContextWindow in
+	 * settings.ts. Hand-edited in this file; no slash command manages it (unlike
 	 * `contextLength`/`keepAlive`) since it's inherently a multi-value table.
 	 */
-	keepAlive?: string | number;
-	/** Per-model num_ctx overrides, keyed by exact model id (e.g. "gpt-oss:latest"). */
 	perModelContext?: Record<string, number>;
 }
 

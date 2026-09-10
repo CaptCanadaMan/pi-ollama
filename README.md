@@ -103,15 +103,22 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 | `OLLAMA_NATIVE_DEBUG_LOG` | `~/.pi/agent/cache/pi-ollama-debug.log` | Override the default debug log path. |
 | `OLLAMA_NATIVE_DUMP_DIR` | unset | If set, writes paired `req-*.json` / `res-*.ndjson` files per request — exact replay artifacts for diagnostics. |
 | `OLLAMA_NATIVE_GHOST_RETRIES` | `2` | Max retries when Ollama returns ghost-token responses (see Reliability below). |
-| `OLLAMA_PER_MODEL_CONTEXT` | unset | Per-model context length overrides. See below. |
+
+**Context length and memory.** By default pi-ollama caps `num_ctx` at 32,768 tokens, even when the model's discovered context window is much larger (some models report 262,144 or more). Without the cap, Ollama would try to allocate enough memory for the full trained context, which exceeds typical hardware budgets. Users on machines with headroom for more can raise the cap via the `OLLAMA_CONTEXT_LENGTH` env var, the `/ollama-context` slash command, or per-model overrides (below). The slash command persists across restarts; the env var is read at startup.
+
+Live-tail the debug log from another terminal:
+
+```bash
+tail -f ~/.pi/agent/cache/pi-ollama-debug.log
+```
 
 ---
 
 ## Per-model context length overrides
 
-By default, pi-ollama caps `num_ctx` at 32,768 tokens for all models, even when the model's discovered context window is much larger. Users on machines with headroom for more can set per-model overrides to use different context ceilings per model.
+`OLLAMA_CONTEXT_LENGTH`/`/ollama-context` set one `num_ctx` ceiling for every model. If you regularly switch between models with very different context windows (e.g. a 65,536-token model and a 131,072-token model), that means re-running `/ollama-context` on every switch.
 
-Per-model overrides are configured in `~/.pi/agent/cache/pi-ollama-config.json` via the `perModelContext` map, keyed by exact model id (e.g. `"gpt-oss:latest"`).
+`perModelContext` sets a ceiling per exact model id instead, taking priority over the global override. It's config-file-only - there's no slash command or env var for it, since it's inherently a multi-value table rather than a single setting. Hand-edit `~/.pi/agent/cache/pi-ollama-config.json`:
 
 ```json
 {
@@ -124,15 +131,13 @@ Per-model overrides are configured in `~/.pi/agent/cache/pi-ollama-config.json` 
 }
 ```
 
-The resolution order for determining the effective context window is:
+Resolution order for the effective context window of a given model:
 
-1. **`perModelContext[m.id]`** — per-model override if set for the current model
-2. **`contextLength`** — the old single global override (set via `/ollama-context` or `OLLAMA_CONTEXT_LENGTH` env var)
-3. **`min(discovered contextWindow, numCtx)`** — the default capped at 32,768
+1. **`perModelContext[model.id]`** - per-model override, if the current model has an entry
+2. **`contextLength`** - the global override (`/ollama-context` or `OLLAMA_CONTEXT_LENGTH`)
+3. **`min(discovered contextWindow, numCtx)`** - the default, capped at 32,768
 
-See `pi/ollama-context-override.json` in the pi configuration for the current bisected context ceiling values per model.
-
-This feature replaces the need to manually run `/ollama-context` every time you switch between models with different context ceiling requirements (e.g., switching between `gpt-oss:latest` at 65536 and `qwen3.6:latest` at 131072 in the same session).
+Settings are read once at extension load, so restart pi after editing the config file to pick up changes - `/ollama-refresh` re-discovers models but doesn't reload the config file.
 
 ---
 
