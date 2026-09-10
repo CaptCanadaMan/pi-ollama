@@ -83,7 +83,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 ## Slash commands
 
 | Command | Description |
-|---|---|
+| --- | --- |
 | `/ollama-status` | Show the Ollama base URL, registered models with capability flags, and currently loaded models. |
 | `/ollama-refresh` | Re-discover models from `/api/tags` + `/api/show` and re-register the provider. Useful after `ollama pull <model>`. |
 | `/ollama-info [model-id]` | Show capability details for a model. Omit the argument to pick from a list of currently registered models. |
@@ -95,7 +95,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 ## Environment variables
 
 | Variable | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `OLLAMA_HOST` | `localhost:11434` | Ollama server host[:port]. May include or omit protocol. |
 | `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` if used. |
 | `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** — a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by `/ollama-keep-alive` if used. |
@@ -181,6 +181,20 @@ npm run check    # tsc --noEmit
 ```
 
 No build step - pi loads the TypeScript source directly. Both commands should pass clean before any PR; the test suite grows one construct at a time, so a behavior fix should arrive with the test that would have caught it. Issues and PRs welcome - a couple of the recent fixes started as community reports, and that's exactly how this is supposed to work.
+
+---
+
+## Live tok/s progress
+
+When pi-ollama is active, it writes two persistent files that status-line-pi.js reads to show real-time tokens-per-second during and after each turn:
+
+- `~/.pi/agent/cache/pi-ollama-live-progress.json` — a small file overwritten every ~150ms during a streaming turn, containing the model ID and chunks received so far. This provides a live, volatile tok/s reading that disappears once the turn ends (by design, showing a frozen mid-generation rate would be misleading).
+
+- `~/.pi/agent/cache/pi-ollama-last-turn.json` — written once per completed turn from Ollama's own `eval_count`/`eval_duration` nanosecond timestamps. This provides a persisted average tok/s figure that remains on screen after the turn finishes, so the user has something to reference between turns.
+
+These files are written best-effort; a failed write simply means the status line falls back to its existing tok/s path. The files are ephemeral and may be cleaned up between pi launches.
+
+Both files are written by the provider module (`src/provider.ts`) automatically — no additional configuration is required.
 
 ---
 

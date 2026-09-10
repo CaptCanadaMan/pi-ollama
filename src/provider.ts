@@ -16,10 +16,69 @@
 //   retry safely. We surface a clear error instead of silently accepting partial
 //   output.
 
+import { writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
 import { convertMessages, convertTools } from "./convert.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
+
+/**
+ * ============================================================================
+ * Live tok/s progress file for status-line-pi.js
+ * ============================================================================
+ *
+ * pi core's own context_window.total_output_tokens only reflects a fully
+ * COMPLETED, persisted assistant message (confirmed 2026-09-09 by reading
+ * pi's bundled cli.js: getLastAssistantUsage() skips any message still
+ * streaming) - it never grows mid-turn, so status-line-pi.js's delta-across-
+ * renders tok/s calc can never get a valid positive sample for a typical
+ * fast, single-shot local Ollama turn (it completes before two renders can
+ * straddle it). This module is the only place with a genuinely live signal
+ * (every NDJSON chunk as it streams), so it writes a small progress file the
+ * status line reads directly instead - throttled to avoid hammering disk on
+ * every chunk (local streams run ~20-100 chunks/sec).
+ */
+const LIVE_PROGRESS_FILE = join(homedir(), ".pi", "agent", "cache", "pi-ollama-live-progress.json");
+const LIVE_PROGRESS_WRITE_INTERVAL_MS = 150;
+let lastLiveProgressWriteTs = 0;
+
+function writeLiveProgress(modelId: string, chunksReceived: number, force = false): void {
+	const now = Date.now();
+	if (!force && now - lastLiveProgressWriteTs < LIVE_PROGRESS_WRITE_INTERVAL_MS) return;
+	lastLiveProgressWriteTs = now;
+	try {
+		writeFileSync(LIVE_PROGRESS_FILE, JSON.stringify({ ts: now, modelId, chunksReceived }));
+	} catch {
+		// Best-effort - a failed write just means the status line falls back
+		// to its existing (non-live) tok/s path for this turn.
+	}
+}
+
+/**
+ * Persisted "last completed turn" average, so the status line has something
+ * to show once a turn finishes and the live-progress file above goes stale
+ * (2026-09-09: the live figure was disappearing within ~1-2s of a turn
+ * ending, well before the user's eyes could catch it) - not throttled,
+ * written once per turn from real Ollama-reported eval_count/eval_duration
+ * (nanoseconds), which is more precise than the chunk-counting proxy above.
+ */
+const LAST_TURN_FILE = join(homedir(), ".pi", "agent", "cache", "pi-ollama-last-turn.json");
+
+function writeLastTurnSummary(modelId: string, tokens: number, evalDurationNs: number): void {
+	if (tokens <= 0 || evalDurationNs <= 0) return;
+	try {
+		writeFileSync(
+			LAST_TURN_FILE,
+			JSON.stringify({ ts: Date.now(), modelId, tokens, avgTokPerSec: tokens / (evalDurationNs / 1e9) }),
+		);
+	} catch {
+		// Best-effort - a failed write just means the status line has no
+		// persisted average to fall back on after this turn.
+	}
+}
+
 
 // ============================================================================
 // Types — minimal structural interfaces that match pi-ai's shapes.
@@ -435,7 +494,7 @@ export function streamOllama(
 				// main loop can attempt parsing too (and surface a clear error if it
 				// was malformed). This handles the case where the stream delivered
 				// content alongside its done signal in a single read.
-				initialBuffer = (firstLine !== null ? `${firstLine}\n` : "") + buf;
+				initialBuffer = (firstLine === null ? "" : `${firstLine}\n`) + buf;
 				break;
 			}
 
@@ -499,6 +558,7 @@ export function streamOllama(
 					if (!line) continue;
 
 					chunksReceived++;
+					writeLiveProgress(model.id, chunksReceived);
 					dbg("chunk", line);
 					dumpResponseLine(dumpId, line);
 
@@ -622,6 +682,7 @@ export function streamOllama(
 
 						const inputTokens = chunk.prompt_eval_count ?? 0;
 						const outputTokens = chunk.eval_count ?? 0;
+						writeLastTurnSummary(model.id, outputTokens, chunk.eval_duration ?? 0);
 						output.usage = {
 							input: inputTokens,
 							output: outputTokens,
