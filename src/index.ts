@@ -18,7 +18,11 @@
 //   OLLAMA_NATIVE_GHOST_RETRIES  — Ghost-token retry count. Default: 2
 
 import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
-import { discoverModels, loadCache, type DiscoveredModel } from "./discovery.js";
+import {
+	discoverModels,
+	loadCache,
+	type DiscoveredModel,
+} from "./discovery.js";
 import { streamOllama } from "./provider.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
@@ -178,7 +182,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		pi,
 		settings,
 		() => models,
-		(fresh) => { models = fresh; },
+		(fresh) => {
+			models = fresh;
+		},
 		registerProvider,
 	);
 }
@@ -194,10 +200,13 @@ function toProviderModel(
 	// The registered contextWindow drives both the wire request (num_ctx) AND
 	// pi's UI context-usage counter. Compute the effective value once here so
 	// both views stay consistent. Resolution:
-	//   1. settings.contextLength — user override (slash command or env var)
-	//   2. min(discovered window, settings.numCtx) — capped default
+	//   1. settings.perModelContext[m.id] — per-model override if set
+	//   2. settings.contextLength — user override (slash command or env var)
+	//   3. min(discovered window, settings.numCtx) — capped default
 	const effectiveContextWindow =
-		settings.contextLength ?? Math.min(m.contextWindow, settings.numCtx);
+		settings.perModelContext?.[m.id] ??
+		settings.contextLength ??
+		Math.min(m.contextWindow, settings.numCtx);
 	return {
 		id: m.id,
 		name: m.name,

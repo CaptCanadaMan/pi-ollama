@@ -3,7 +3,7 @@
 // OLLAMA_HOST                 — Ollama server host[:port]. Default: localhost:11434
 // OLLAMA_NATIVE_GHOST_RETRIES — Max retries on ghost-token response. Default: 2
 // OLLAMA_CONTEXT_LENGTH       — User-set context length override (also Ollama's own
-//                                env var, honored for cross-tool consistency).
+//                                env var, honored for cross-tool compatibility).
 //                                Superseded by any slash-command-set persisted value.
 // OLLAMA_KEEP_ALIVE           — keep_alive for /api/chat requests (also Ollama's own
 //                                env var, honored for cross-tool consistency).
@@ -43,6 +43,10 @@ export interface OllamaExtensionSettings {
 	 * config file so changes survive restart.
 	 */
 	contextLength?: number;
+	/**
+	 * Per-model num_ctx overrides, from the persisted config file. Takes priority over contextLength.
+	 */
+	perModelContext?: Record<string, number>;
 }
 
 // Go-style duration: one or more number+unit groups ("5m", "1h30m", "500ms").
@@ -88,9 +92,7 @@ export function resolveKeepAlive(
 export function loadSettings(): OllamaExtensionSettings {
 	// OLLAMA_HOST may be bare "host:port" or already include a protocol.
 	const rawHost = process.env.OLLAMA_HOST ?? "localhost:11434";
-	const baseUrl = rawHost.startsWith("http")
-		? rawHost
-		: `http://${rawHost}`;
+	const baseUrl = rawHost.startsWith("http") ? rawHost : `http://${rawHost}`;
 
 	const rawRetries = process.env.OLLAMA_NATIVE_GHOST_RETRIES;
 	const ghostRetries = (() => {
@@ -113,9 +115,13 @@ export function loadSettings(): OllamaExtensionSettings {
 
 	return {
 		baseUrl: baseUrl.replace(/\/+$/, ""),
-		keepAlive: resolveKeepAlive(persisted.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
+		keepAlive: resolveKeepAlive(
+			persisted.keepAlive,
+			process.env.OLLAMA_KEEP_ALIVE,
+		),
 		numCtx: 32768,
 		ghostRetries,
 		contextLength,
+		perModelContext: persisted.perModelContext,
 	};
 }
