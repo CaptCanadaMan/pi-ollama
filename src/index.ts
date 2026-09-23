@@ -16,12 +16,15 @@
 //                                  (default: ~/.pi/agent/cache/pi-ollama-debug.log)
 //   OLLAMA_NATIVE_DUMP_DIR       — Path to write req/res dump files for diagnostics
 //   OLLAMA_NATIVE_GHOST_RETRIES  — Ghost-token retry count. Default: 2
+//   OLLAMA_NATIVE_THROUGHPUT     — tok/s telemetry. On by default; 0 switches it off
 
 import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
 import { discoverModels, loadCache, type DiscoveredModel } from "./discovery.js";
 import { streamOllama } from "./provider.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
+import { registerThroughputStatus, type StatusPi } from "./status.js";
+import { GenerationTelemetry } from "./telemetry.js";
 
 // ============================================================================
 // Minimal structural interfaces for the pi extension API.
@@ -44,7 +47,7 @@ interface ProviderModel {
 	};
 }
 
-interface ExtensionAPI {
+interface ExtensionAPI extends StatusPi {
 	registerProvider(
 		name: string,
 		config: {
@@ -138,6 +141,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
 	await resolveStreamClass();
 
+	// tok/s telemetry: the provider reports into this, the status handlers pull
+	// from it. Undefined = feature switched off, and the provider reports nowhere.
+	const telemetry = settings.throughput ? new GenerationTelemetry() : undefined;
+	if (telemetry) registerThroughputStatus(pi, telemetry);
+
 	// Register the provider with the current model list.
 	// On first call there's nothing to unregister; on refresh we attempt to
 	// unregister and tolerate failure (older pi versions may lack the method —
@@ -165,6 +173,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 					options as Parameters<typeof streamOllama>[2],
 					settings,
 					StreamClass,
+					telemetry,
 				),
 			models: currentModels.map((m) => toProviderModel(m, settings)),
 		});

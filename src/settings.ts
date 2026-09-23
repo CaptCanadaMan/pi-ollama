@@ -12,6 +12,9 @@
 //                                and the server's own setting decides (gh#5 — a
 //                                per-request keep_alive overrides the server, so the
 //                                old hardcoded "5m" defeated server-side keep-warm).
+// OLLAMA_NATIVE_THROUGHPUT    — tok/s telemetry (footer status, session records,
+//                                /ollama-stats). On by default; set to 0 / false /
+//                                off / no to switch the whole feature off.
 
 import { loadPersistedConfig } from "./config.js";
 
@@ -43,6 +46,14 @@ export interface OllamaExtensionSettings {
 	 * config file so changes survive restart.
 	 */
 	contextLength?: number;
+	/** tok/s telemetry (status + session records). Default: true. */
+	throughput: boolean;
+}
+
+/** On unless explicitly switched off - an unrecognized value leaves it on. */
+export function resolveThroughputEnabled(envRaw: string | undefined): boolean {
+	const v = (envRaw ?? "").trim().toLowerCase();
+	return !["0", "false", "off", "no"].includes(v);
 }
 
 // Go-style duration: one or more number+unit groups ("5m", "1h30m", "500ms").
@@ -117,5 +128,6 @@ export function loadSettings(): OllamaExtensionSettings {
 		numCtx: 32768,
 		ghostRetries,
 		contextLength,
+		throughput: resolveThroughputEnabled(process.env.OLLAMA_NATIVE_THROUGHPUT),
 	};
 }

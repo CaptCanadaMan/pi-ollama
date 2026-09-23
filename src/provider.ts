@@ -20,6 +20,8 @@ import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
 import { convertMessages, convertTools } from "./convert.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
+import type { TelemetrySink } from "./telemetry.js";
+import { parseGenerationMetrics } from "./throughput.js";
 
 // ============================================================================
 // Types — minimal structural interfaces that match pi-ai's shapes.
@@ -234,8 +236,20 @@ export function streamOllama(
 	options: PiSimpleStreamOptions | undefined,
 	settings: OllamaExtensionSettings,
 	StreamClass: new () => EventStream,
+	telemetry?: TelemetrySink,
 ): EventStream {
 	const stream = new StreamClass();
+
+	// Telemetry is strictly best-effort: a throwing sink must never fail or
+	// alter the model turn.
+	const report = (fn: (sink: TelemetrySink) => void) => {
+		if (!telemetry) return;
+		try {
+			fn(telemetry);
+		} catch (e) {
+			dbg("telemetry-error", { error: String(e) });
+		}
+	};
 
 	(async () => {
 		// Build the output message shell — populated incrementally as chunks arrive.
@@ -439,6 +453,9 @@ export function streamOllama(
 				break;
 			}
 
+			// Past the ghost-retry loop: this attempt is the one that streams.
+			report((t) => t.started(model.id));
+
 			stream.push({ type: "start", partial: output });
 
 			// ── Content block helpers ───────────────────────────────────────────
@@ -489,6 +506,7 @@ export function streamOllama(
 			let sawDoneChunk = false;
 			let chunksReceived = 0;
 			let streamDoneFlag = false;
+			let finalChunk: OllamaChunk | undefined;
 
 			outer: while (true) {
 				while (true) {
@@ -617,6 +635,7 @@ export function streamOllama(
 
 					if (chunk.done) {
 						sawDoneChunk = true;
+						finalChunk = chunk;
 						finishBlock(currentBlock);
 						currentBlock = null;
 
@@ -744,6 +763,12 @@ export function streamOllama(
 				);
 			}
 
+			// Only an accepted response counts as a completed measurement - every
+			// reliability guard above has passed by this point.
+			report((t) =>
+				t.completed(finalChunk ? parseGenerationMetrics(finalChunk) : undefined),
+			);
+
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
@@ -754,6 +779,7 @@ export function streamOllama(
 				stopReason: output.stopReason,
 				message: output.errorMessage,
 			});
+			report((t) => t.failed());
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

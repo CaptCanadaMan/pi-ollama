@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseKeepAlive, resolveKeepAlive } from "../src/settings.js";
+import {
+	parseKeepAlive,
+	resolveKeepAlive,
+	resolveThroughputEnabled,
+} from "../src/settings.js";
 
 // keep_alive semantics (gh#5): a per-request keep_alive OVERRIDES the Ollama
 // server's OLLAMA_KEEP_ALIVE, so the old hardcoded "5m" silently defeated any
@@ -50,5 +54,23 @@ describe("resolveKeepAlive — persisted → env → defer-to-server", () => {
 
 	it("an invalid env value resolves to undefined (defer), never a fallback constant", () => {
 		expect(resolveKeepAlive(undefined, "banana")).toBeUndefined();
+	});
+});
+
+describe("resolveThroughputEnabled - tok/s telemetry is on unless switched off", () => {
+	it("is on by default", () => {
+		expect(resolveThroughputEnabled(undefined)).toBe(true);
+		expect(resolveThroughputEnabled("")).toBe(true);
+	});
+
+	it("turns off for 0 / false / off / no (any case)", () => {
+		for (const raw of ["0", "false", "OFF", "No", " 0 "]) {
+			expect(resolveThroughputEnabled(raw)).toBe(false);
+		}
+	});
+
+	it("stays on for anything else", () => {
+		expect(resolveThroughputEnabled("1")).toBe(true);
+		expect(resolveThroughputEnabled("banana")).toBe(true);
 	});
 });
