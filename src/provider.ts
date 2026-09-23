@@ -17,7 +17,7 @@
 //   output.
 
 import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
-import { convertMessages, convertTools } from "./convert.js";
+import { convertMessages, convertTools, resolveContext } from "./convert.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 
@@ -262,11 +262,13 @@ export function streamOllama(
 			const url = `${baseUrl}/api/chat`;
 
 			const supportsVision = model.input?.includes("image") ?? false;
-			const piMessages = context.messages as Parameters<typeof convertMessages>[0];
+			// pi >= 0.86 carries the system prompt and tools as system messages
+			// in context.messages rather than systemPrompt/tools (issue #11).
+			const resolved = resolveContext(context);
 
 			const messages = convertMessages(
-				piMessages,
-				context.systemPrompt,
+				resolved.messages,
+				resolved.systemPrompt,
 				supportsVision,
 			);
 
@@ -292,8 +294,8 @@ export function streamOllama(
 				reasoningCapable: Boolean(model.reasoning),
 				reasoningLevel: options?.reasoning,
 				tools:
-					context.tools && context.tools.length > 0
-						? convertTools(context.tools)
+					resolved.tools.length > 0
+						? convertTools(resolved.tools)
 						: undefined,
 			});
 

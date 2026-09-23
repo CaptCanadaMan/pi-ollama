@@ -106,6 +106,80 @@ export function convertMessages(
 	return out;
 }
 
+// pi >= 0.86 hands providers a normalized transcript: the system prompt and
+// tool declarations are carried as role:"system" messages inside `messages`
+// (content + named sections, toolsAdded/toolsRemoved deltas) instead of
+// `systemPrompt` / `tools`. Mirrors pi-ai's getCurrentSystemPrompt() /
+// getCurrentTools() / collapseSystemMessages(), reimplemented structurally so
+// we don't depend on the installed pi-ai exporting them (issue #11).
+
+interface PiSystemMessage {
+	role: "system";
+	content: string | ContentBlock[];
+	sections?: Record<string, string | null>;
+	toolsAdded?: PiTool[];
+	toolsRemoved?: { name: string }[];
+}
+
+export interface PiContextLike {
+	systemPrompt?: string;
+	messages: readonly unknown[];
+	tools?: PiTool[];
+}
+
+export interface ResolvedContext {
+	systemPrompt: string | undefined;
+	messages: PiMessage[];
+	tools: PiTool[];
+}
+
+/**
+ * Resolve the system prompt, tool list and conversation messages from either
+ * context contract. Old-style contexts (no system messages) pass through;
+ * transcript contexts have every system message replayed into one prompt and
+ * one tool set, and are dropped from the message list.
+ */
+export function resolveContext(context: PiContextLike): ResolvedContext {
+	const systemMessages = context.messages.filter(
+		(m): m is PiSystemMessage => (m as { role?: string })?.role === "system",
+	);
+	if (systemMessages.length === 0) {
+		return {
+			systemPrompt: context.systemPrompt,
+			messages: context.messages as PiMessage[],
+			tools: context.tools ?? [],
+		};
+	}
+
+	const content: string[] = [];
+	const sections = new Map<string, string>();
+	const tools = new Map<string, PiTool>();
+	for (const msg of systemMessages) {
+		const text =
+			typeof msg.content === "string"
+				? msg.content
+				: msg.content.filter(isText).map((b) => b.text).join("\n");
+		if (text.length > 0) content.push(text);
+		for (const [name, value] of Object.entries(msg.sections ?? {})) {
+			if (value === null) sections.delete(name);
+			else sections.set(name, value);
+		}
+		for (const t of msg.toolsRemoved ?? []) tools.delete(t.name);
+		for (const t of msg.toolsAdded ?? []) tools.set(t.name, t);
+	}
+	const prompt = [content.join("\n\n"), ...sections.values()]
+		.filter((p) => p.length > 0)
+		.join("\n\n");
+
+	return {
+		systemPrompt: prompt.length > 0 ? prompt : context.systemPrompt,
+		messages: context.messages.filter(
+			(m) => (m as { role?: string })?.role !== "system",
+		) as PiMessage[],
+		tools: tools.size > 0 ? [...tools.values()] : (context.tools ?? []),
+	};
+}
+
 export function convertTools(tools: PiTool[]): OllamaTool[] {
 	return tools.map((t) => ({
 		type: "function",

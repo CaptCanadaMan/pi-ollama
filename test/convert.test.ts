@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertMessages } from "../src/convert.js";
+import { convertMessages, resolveContext } from "../src/convert.js";
 
 const B64 = "aGVsbG8="; // any base64 payload — conversion never decodes it
 
@@ -101,5 +101,49 @@ describe("convertMessages — normalisation", () => {
 		] as unknown as Msgs;
 		const wire = convertMessages(msgs, "sys", true);
 		expect(wire.map((m) => m.role)).toEqual(["system", "user", "user"]);
+	});
+});
+
+describe("resolveContext — pi >= 0.86 transcript contract (issue #11)", () => {
+	const read = { name: "read", description: "Read a file", parameters: { type: "object" } };
+	const bash = { name: "bash", description: "Run a command", parameters: { type: "object" } };
+	const user = { role: "user", content: "hi", timestamp: 1 };
+
+	it("recovers tools and the system prompt from the leading system message", () => {
+		const r = resolveContext({
+			messages: [
+				{ role: "system", content: "base", sections: { a: "<a/>" }, toolsAdded: [read, bash], timestamp: 0 },
+				user,
+			],
+		});
+		expect(r.systemPrompt).toBe("base\n\n<a/>");
+		expect(r.tools.map((t) => t.name)).toEqual(["read", "bash"]);
+		expect(r.messages).toEqual([user]);
+	});
+
+	it("replays later system messages: appended content, section patches, tool removals", () => {
+		const r = resolveContext({
+			messages: [
+				{ role: "system", content: "base", sections: { a: "<a/>", b: "<b/>" }, toolsAdded: [read, bash], timestamp: 0 },
+				user,
+				{ role: "system", content: [{ type: "text", text: "more" }], sections: { a: null, b: "<b2/>" }, toolsRemoved: [{ name: "bash" }], timestamp: 2 },
+			],
+		});
+		expect(r.systemPrompt).toBe("base\n\nmore\n\n<b2/>");
+		expect(r.tools.map((t) => t.name)).toEqual(["read"]);
+		expect(r.messages).toEqual([user]);
+	});
+
+	it("passes old-style contexts (pi < 0.86) through unchanged", () => {
+		const r = resolveContext({ systemPrompt: "sys", tools: [read], messages: [user] });
+		expect(r.systemPrompt).toBe("sys");
+		expect(r.tools).toEqual([read]);
+		expect(r.messages).toEqual([user]);
+	});
+
+	it("yields no system prompt and no tools for a bare transcript", () => {
+		const r = resolveContext({ messages: [user] });
+		expect(r.systemPrompt).toBeUndefined();
+		expect(r.tools).toEqual([]);
 	});
 });
