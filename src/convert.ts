@@ -63,20 +63,108 @@ interface ToolResultMessage {
 	content: ContentBlock[];
 }
 
-type PiMessage = UserMessage | AssistantMessage | ToolResultMessage;
+// pi >= 0.86: the system prompt and tool declarations travel in the transcript.
+// The leading one holds the base prompt; later ones append content, patch named
+// sections (null removes one) and add or remove tools.
+interface SystemMessage {
+	role: "system";
+	content: string | ContentBlock[];
+	sections?: Record<string, string | null>;
+	toolsAdded?: PiTool[];
+	toolsRemoved?: { name: string }[];
+}
 
-interface PiTool {
+type ConversationMessage = UserMessage | AssistantMessage | ToolResultMessage;
+
+export type PiMessage = ConversationMessage | SystemMessage;
+
+export interface PiTool {
 	name: string;
 	description: string;
 	parameters: object;
+}
+
+/** What pi hands a provider. systemPrompt/tools only exist on pi < 0.86. */
+export interface PiContext {
+	systemPrompt?: string;
+	messages: readonly PiMessage[];
+	tools?: PiTool[];
 }
 
 // ============================================================================
 // Public API
 // ============================================================================
 
+/**
+ * Convert one pi request context to the /api/chat messages and tools.
+ *
+ * pi >= 0.86 carries the system prompt and tools as system messages in the
+ * transcript (gh#11); older pi passed them as context.systemPrompt and
+ * context.tools. toTranscript folds the old shape into the new one, so both
+ * contracts take the same path.
+ */
+export function convertContext(
+	context: PiContext,
+	supportsVision: boolean,
+): { messages: OllamaWireMessage[]; tools: OllamaTool[] | undefined } {
+	const { prompt, tools, messages } = collapseSystemMessages(toTranscript(context));
+	return {
+		messages: convertMessages(messages, prompt, supportsVision),
+		tools: tools.length > 0 ? convertTools(tools) : undefined,
+	};
+}
+
+/**
+ * Fold pi < 0.86's systemPrompt/tools into a leading system message, the same
+ * way pi-ai's normalizeContext() does - pi defines those fields as shorthand
+ * for exactly that. On pi >= 0.86 they're absent and the messages pass through.
+ */
+export function toTranscript({ systemPrompt, tools, messages }: PiContext): readonly PiMessage[] {
+	if (!systemPrompt && !tools?.length) return messages;
+	return [{ role: "system", content: systemPrompt ?? "", toolsAdded: tools }, ...messages];
+}
+
+/**
+ * Replay every system message in order into one prompt and the current tool
+ * set, and drop them from the conversation. Mirrors pi-ai's
+ * collapseSystemMessages() / getCurrentSystemPrompt() / getCurrentTools(),
+ * reimplemented so we don't depend on the host's pi-ai version; the parity
+ * tests in test/convert.test.ts check it against the real ones.
+ *
+ * Mid-conversation changes land in the leading prompt rather than in place:
+ * most Ollama chat templates only honour a system message at the top.
+ * Replay approach from TRex22's PR #12.
+ */
+export function collapseSystemMessages(transcript: readonly PiMessage[]): {
+	prompt: string;
+	tools: PiTool[];
+	messages: ConversationMessage[];
+} {
+	const content: string[] = [];
+	const sections = new Map<string, string>();
+	const tools = new Map<string, PiTool>();
+	const messages: ConversationMessage[] = [];
+	for (const msg of transcript) {
+		if (msg.role !== "system") {
+			messages.push(msg);
+			continue;
+		}
+		content.push(textOf(msg.content));
+		for (const [name, text] of Object.entries(msg.sections ?? {})) {
+			if (text === null) sections.delete(name);
+			else sections.set(name, text);
+		}
+		for (const t of msg.toolsRemoved ?? []) tools.delete(t.name);
+		for (const t of msg.toolsAdded ?? []) tools.set(t.name, t);
+	}
+	const prompt = [content.filter(Boolean).join("\n\n"), ...sections.values()]
+		.filter(Boolean)
+		.join("\n\n");
+	return { prompt, tools: [...tools.values()], messages };
+}
+
 export function convertMessages(
-	messages: readonly PiMessage[],
+	messages: readonly ConversationMessage[],
 	systemPrompt: string | undefined,
 	supportsVision: boolean,
 ): OllamaWireMessage[] {
@@ -96,9 +184,9 @@ export function convertMessages(
 		} else if (msg.role === "toolResult") {
 			out.push(convertToolResult(msg as ToolResultMessage, supportsVision));
 		} else {
-			// Unknown role — pi's compat flags should convert developer→system
-			// before reaching us, but log if anything else arrives so we can
-			// diagnose during the smoke test instead of silently dropping.
+			// Unknown role — log it so it can be diagnosed instead of silently
+			// dropped. (System messages never get here: collapseSystemMessages
+			// has already folded them into systemPrompt.)
 			dbg("unknown-role", { role: (msg as { role: string }).role });
 		}
 	}
@@ -129,10 +217,7 @@ function convertUser(
 		return { role: "user", content: sanitize(msg.content) };
 	}
 
-	const text = msg.content
-		.filter(isText)
-		.map((b) => b.text)
-		.join("\n");
+	const text = textOf(msg.content);
 
 	const images = supportsVision
 		? msg.content.filter(isImage).map((b) => b.data)
@@ -147,10 +232,7 @@ function convertUser(
 
 function convertAssistant(msg: AssistantMessage): OllamaWireMessage | null {
 	// Drop thinking blocks — Ollama re-derives reasoning each turn.
-	const text = msg.content
-		.filter(isText)
-		.map((b) => b.text)
-		.join("");
+	const text = textOf(msg.content, "");
 
 	const toolCalls = msg.content.filter(isToolCall);
 
@@ -175,10 +257,7 @@ function convertToolResult(
 	msg: ToolResultMessage,
 	supportsVision: boolean,
 ): OllamaWireMessage {
-	const text = msg.content
-		.filter(isText)
-		.map((b) => b.text)
-		.join("\n");
+	const text = textOf(msg.content);
 
 	// Ollama accepts an images array on role:"tool" messages, same as on user
 	// messages — verified live against gemma4:12b (red/blue control images both
@@ -205,8 +284,10 @@ function convertToolResult(
 // pass that runs regardless.
 // ============================================================================
 
-function normalizeMessages(messages: readonly PiMessage[]): PiMessage[] {
-	const result: PiMessage[] = [];
+function normalizeMessages(
+	messages: readonly ConversationMessage[],
+): ConversationMessage[] {
+	const result: ConversationMessage[] = [];
 	let skipToolResults = false;
 
 	for (const msg of messages) {
@@ -230,8 +311,17 @@ function normalizeMessages(messages: readonly PiMessage[]): PiMessage[] {
 }
 
 // ============================================================================
-// Type guards
+// Type guards and content helpers
 // ============================================================================
+
+/** The text of a message's content, mirroring pi-ai's contentText(). */
+function textOf(content: string | readonly ContentBlock[], separator = "\n"): string {
+	if (typeof content === "string") return content;
+	return content
+		.filter(isText)
+		.map((b) => b.text)
+		.join(separator);
+}
 
 function isText(b: ContentBlock): b is TextContent {
 	return b.type === "text";

@@ -17,7 +17,7 @@
 //   output.
 
 import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
-import { convertMessages, convertTools } from "./convert.js";
+import { convertContext, type PiContext } from "./convert.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 import type { TelemetrySink } from "./telemetry.js";
@@ -39,18 +39,6 @@ interface PiModel {
 	maxTokens?: number;
 	input?: ("text" | "image")[];
 	reasoning?: boolean;
-}
-
-interface PiContext {
-	systemPrompt?: string;
-	messages: readonly unknown[];
-	tools?: PiTool[];
-}
-
-interface PiTool {
-	name: string;
-	description: string;
-	parameters: object;
 }
 
 interface PiSimpleStreamOptions {
@@ -276,13 +264,7 @@ export function streamOllama(
 			const url = `${baseUrl}/api/chat`;
 
 			const supportsVision = model.input?.includes("image") ?? false;
-			const piMessages = context.messages as Parameters<typeof convertMessages>[0];
-
-			const messages = convertMessages(
-				piMessages,
-				context.systemPrompt,
-				supportsVision,
-			);
+			const { messages, tools } = convertContext(context, supportsVision);
 
 			// model.contextWindow already incorporates settings.contextLength
 			// override and the capped default — applied once in index.ts's
@@ -305,10 +287,7 @@ export function streamOllama(
 				keepAlive: settings.keepAlive,
 				reasoningCapable: Boolean(model.reasoning),
 				reasoningLevel: options?.reasoning,
-				tools:
-					context.tools && context.tools.length > 0
-						? convertTools(context.tools)
-						: undefined,
+				tools,
 			});
 
 			// Allow callers to inspect or replace the request body.

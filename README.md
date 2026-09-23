@@ -195,7 +195,7 @@ Thanks to [@TRex22](https://github.com/TRex22) for the feature request (#10).
 
 ## Compatibility
 
-- **pi**: Developed and tested against `@earendil-works/pi-coding-agent` v0.82.x; verified in daily use through v0.84.x. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`). The tok/s display and session records use `pi.on`, `ctx.ui.setStatus` and `pi.appendEntry`; on a pi without them those parts quietly do nothing.
+- **pi**: Tested against `@earendil-works/pi-coding-agent` v0.87.x, and works back to v0.75.5. pi 0.86 moved the system prompt and tool declarations out of the request context and into the conversation transcript (gh#11); pi-ollama reads both shapes, so older versions keep working. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`). The tok/s display and session records use `pi.on`, `ctx.ui.setStatus` and `pi.appendEntry`; on a pi without them those parts quietly do nothing.
 - **Ollama**: Requires Ollama with `/api/chat` support (most versions). `/api/ps` is used opportunistically and tolerates older versions that don't expose it.
 - **Node**: Requires Node 22.19+.
 
