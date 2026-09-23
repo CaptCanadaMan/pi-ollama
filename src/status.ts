@@ -1,11 +1,13 @@
-// Throughput display: pulls from the telemetry seam inside pi's message
-// events and writes to the footer via ctx.ui.setStatus().
+// Throughput display + session records: pulls from the telemetry seam inside
+// pi's message events, writes to the footer via ctx.ui.setStatus(), and
+// appends each completed generation to the session via pi.appendEntry().
 //
 // Event handlers are where pi hands out a UI context, so nothing here (or in
 // the provider) ever has to hold one. Everything is guarded: a pi too old to
 // have on()/setStatus(), a mode with no UI, or a throwing UI call all degrade
 // to "no status", never to a failed turn.
 
+import { GENERATION_ENTRY_TYPE, toGenerationRecord } from "./stats.js";
 import type { GenerationTelemetry } from "./telemetry.js";
 import {
 	formatEstimatedThroughput,
@@ -32,6 +34,7 @@ export interface StatusPi {
 		event: string,
 		handler: (event: never, ctx: StatusContext) => void,
 	) => void;
+	appendEntry?: (customType: string, data?: unknown) => void;
 }
 
 function isOllamaAssistantMessage(event: MessageEvent): boolean {
@@ -70,6 +73,13 @@ export function registerThroughputStatus(
 	pi.on("message_end", (event: MessageEvent, ctx) => {
 		if (!isOllamaAssistantMessage(event)) return;
 		const completed = telemetry.takeCompleted();
+		if (completed) {
+			try {
+				pi.appendEntry?.(GENERATION_ENTRY_TYPE, toGenerationRecord(completed));
+			} catch {
+				// Persistence is best-effort.
+			}
+		}
 		setStatus(
 			ctx,
 			completed ? formatExactThroughput(completed.metrics) : undefined,

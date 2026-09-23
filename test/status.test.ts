@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { GENERATION_ENTRY_TYPE } from "../src/stats.js";
 import { registerThroughputStatus, STATUS_KEY } from "../src/status.js";
 import { GenerationTelemetry } from "../src/telemetry.js";
 
@@ -171,5 +172,50 @@ describe("throughput status - live estimate while streaming", () => {
 			STATUS_KEY,
 			"47.3 tok/s · 612 tok",
 		);
+	});
+});
+
+describe("session records - completed generations persist as custom session entries", () => {
+	it("appends one record per completed generation, outside the LLM context", () => {
+		const pi = { ...fakePi(), appendEntry: vi.fn() };
+		const telemetry = new GenerationTelemetry({ now: () => 1_700_000_000_000 });
+		registerThroughputStatus(pi, telemetry);
+
+		telemetry.started("gemma4:12b");
+		telemetry.completed({
+			outputTokens: 612,
+			evalDurationNs: 12_938_689_217,
+			tokensPerSecond: 47.3,
+			promptTokens: 2048,
+		});
+		pi.fire("message_end", { message: ollamaMessage }, fakeCtx());
+
+		expect(pi.appendEntry).toHaveBeenCalledTimes(1);
+		expect(pi.appendEntry).toHaveBeenCalledWith(GENERATION_ENTRY_TYPE, {
+			model: "gemma4:12b",
+			timestamp: 1_700_000_000_000,
+			outputTokens: 612,
+			evalDurationNs: 12_938_689_217,
+			tokensPerSecond: 47.3,
+			promptTokens: 2048,
+		});
+	});
+
+	it("records nothing for a failed generation, and survives a pi without appendEntry", () => {
+		const pi = { ...fakePi(), appendEntry: vi.fn() };
+		const telemetry = new GenerationTelemetry();
+		registerThroughputStatus(pi, telemetry);
+		telemetry.started("gemma4:12b");
+		telemetry.failed();
+		pi.fire("message_end", { message: ollamaMessage }, fakeCtx());
+		expect(pi.appendEntry).not.toHaveBeenCalled();
+
+		const oldPi = fakePi();
+		const t2 = new GenerationTelemetry();
+		registerThroughputStatus(oldPi, t2);
+		completeGeneration(t2);
+		expect(() =>
+			oldPi.fire("message_end", { message: ollamaMessage }, fakeCtx()),
+		).not.toThrow();
 	});
 });

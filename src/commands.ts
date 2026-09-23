@@ -1,4 +1,5 @@
-// Extension commands: /ollama-status, /ollama-refresh, /ollama-info
+// Extension commands: /ollama-status, /ollama-refresh, /ollama-info,
+// /ollama-context, /ollama-keep-alive, /ollama-stats
 //
 // Output is delivered via ctx.ui.notify() — the TUI-aware notification API
 // from pi's ExtensionCommandContext. Direct console.log to stdout corrupts
@@ -9,6 +10,11 @@
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import { discoverModels, type DiscoveredModel } from "./discovery.js";
 import { parseKeepAlive, type OllamaExtensionSettings } from "./settings.js";
+import {
+	formatSessionStats,
+	readGenerationRecords,
+	summarizeByModel,
+} from "./stats.js";
 
 interface OllamaPs {
 	models?: Array<{
@@ -34,6 +40,8 @@ interface CommandUIContext {
 			opts?: { signal?: AbortSignal; timeout?: number },
 		): Promise<string | undefined>;
 	};
+	/** Read-only session access. Optional: absent on older pi versions. */
+	sessionManager?: { getEntries?: () => unknown[] };
 }
 
 // Minimal structural interface for the pi ExtensionAPI — only the methods
@@ -395,6 +403,26 @@ export function registerCommands(
 					"info",
 				);
 			}
+		},
+	});
+
+	pi.registerCommand("ollama-stats", {
+		description: "Show tok/s throughput for this session's Ollama generations",
+		handler: (_args, ctx) => {
+			if (!settings.throughput) {
+				ctx.ui.notify(
+					"Throughput telemetry is switched off (OLLAMA_NATIVE_THROUGHPUT=0). Unset it and relaunch pi to record generations.",
+					"info",
+				);
+				return;
+			}
+			// All entries, not just the current branch: throughput describes the
+			// machine and the model, whichever branch the work happened on.
+			const entries = ctx.sessionManager?.getEntries?.() ?? [];
+			ctx.ui.notify(
+				formatSessionStats(summarizeByModel(readGenerationRecords(entries))),
+				"info",
+			);
 		},
 	});
 }
