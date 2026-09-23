@@ -89,6 +89,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 | `/ollama-info [model-id]` | Show capability details for a model. Omit the argument to pick from a list of currently registered models. |
 | `/ollama-context` | Set the context length (`num_ctx`) pi-ollama sends to `/api/chat`. Picker with common presets + custom input. Persists across pi launches. |
 | `/ollama-keep-alive` | Set the `keep_alive` pi-ollama sends to `/api/chat`, or (the default) send none and let the Ollama server's own setting decide. Picker with presets + custom input. Persists across pi launches. |
+| `/ollama-stats` | Show tok/s throughput for this session's Ollama generations, per model: last, session average, fastest, tokens generated. |
 
 ---
 
@@ -103,6 +104,7 @@ Switch to one of the discovered models and use pi normally — tool calls work e
 | `OLLAMA_NATIVE_DEBUG_LOG` | `~/.pi/agent/cache/pi-ollama-debug.log` | Override the default debug log path. |
 | `OLLAMA_NATIVE_DUMP_DIR` | unset | If set, writes paired `req-*.json` / `res-*.ndjson` files per request — exact replay artifacts for diagnostics. |
 | `OLLAMA_NATIVE_GHOST_RETRIES` | `2` | Max retries when Ollama returns ghost-token responses (see Reliability below). |
+| `OLLAMA_NATIVE_THROUGHPUT` | on | Generation-speed telemetry (see Generation speed below). Set to `0` to switch the whole feature off - no footer figure, no session records. |
 
 **Context length and memory.** By default pi-ollama caps `num_ctx` at 32,768 tokens, even when the model's discovered context window is much larger (some models report 262,144 or more). Without the cap, Ollama would try to allocate enough memory for the full trained context, which exceeds typical hardware budgets. Users on machines with headroom for more can raise the cap via the `OLLAMA_CONTEXT_LENGTH` env var or `/ollama-context` slash command. The slash command persists across restarts; the env var is read at startup.
 
@@ -155,9 +157,45 @@ For vision-capable models, images pass through from **both** user messages and *
 
 ---
 
+## Generation speed (tok/s)
+
+While a response streams, pi's footer shows a live estimate, and when the generation finishes it is replaced by the exact figure:
+
+```text
+≈46 tok/s                  <- while streaming (estimate)
+47.3 tok/s · 612 tok       <- when done (Ollama-reported)
+```
+
+The two numbers come from different places, and the `≈` is there so you can tell which one you're looking at.
+
+**The final figure is Ollama's own.** It is `eval_count / eval_duration` from the last chunk of the response - tokens generated over the time spent generating them. Model load and prompt evaluation aren't in it, so it is the number to quote when comparing rigs or models.
+
+**The live figure is an estimate.** Ollama doesn't report token counts mid-stream, so the extension counts streamed characters (text and thinking), converts them at roughly 4 characters per token, and measures over the last couple of seconds rather than from the start of the request. After each completed generation it compares Ollama's real token count against the characters it saw and adjusts the ratio for that model, smoothed so one odd response can't throw it. So the estimate gets closer to the final figure over the first several turns with a model. The calibration lives in memory only and starts fresh each launch. Turns that end in a tool call don't calibrate, because tool-call tokens never stream as characters.
+
+If a generation fails, is cancelled, or the server doesn't send the metrics, the footer clears - it never invents a number.
+
+**Session history.** Each completed generation is appended to the pi session as a custom entry (`pi-ollama-generation`). Custom entries are not sent to the model, so this costs no context. `/ollama-stats` reads them back:
+
+```text
+Model: gemma4:12b
+  Last: 47.3 tok/s
+  Session avg: 45.9 tok/s
+  Fastest: 51.2 tok/s
+  Generated: 8,491 tok
+  Generations: 14
+```
+
+The session average is total tokens over total generation time, not the mean of the per-turn rates, so a long generation counts for more than a one-line reply. A "generation" is one model response - an agent turn that calls three tools is four of them.
+
+Nothing here writes files while streaming, and nothing in it can fail a turn: the provider only reports what happened, and every display or storage call is best-effort. Set `OLLAMA_NATIVE_THROUGHPUT=0` to turn it all off.
+
+Thanks to [@TRex22](https://github.com/TRex22) for the feature request (#10).
+
+---
+
 ## Compatibility
 
-- **pi**: Developed and tested against `@earendil-works/pi-coding-agent` v0.82.x; verified in daily use through v0.84.x. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`).
+- **pi**: Developed and tested against `@earendil-works/pi-coding-agent` v0.82.x; verified in daily use through v0.84.x. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`). The tok/s display and session records use `pi.on`, `ctx.ui.setStatus` and `pi.appendEntry`; on a pi without them those parts quietly do nothing.
 - **Ollama**: Requires Ollama with `/api/chat` support (most versions). `/api/ps` is used opportunistically and tolerates older versions that don't expose it.
 - **Node**: Requires Node 22.19+.
 
@@ -176,7 +214,9 @@ See [src/](./src/) for the implementation. Each file has a header comment explai
 ```bash
 npm install
 npm test         # vitest - the pure seams: message conversion, request-body building,
-                 # keep_alive resolution, thinking mapping, the swallow-guard heuristics
+                 # keep_alive resolution, thinking mapping, the swallow-guard heuristics,
+                 # tok/s metrics/estimator/calibration, plus provider lifecycle tests
+                 # against a stubbed fetch
 npm run check    # tsc --noEmit
 ```
 
