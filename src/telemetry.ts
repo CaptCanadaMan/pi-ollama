@@ -10,6 +10,7 @@
 // never reports progress; the other reliability errors end the call, and any
 // retry is a fresh call with a fresh started().
 
+import { RatioCalibrator } from "./calibration.js";
 import type { GenerationMetrics } from "./throughput.js";
 
 /** What the provider reports. It knows nothing about rendering or storage. */
@@ -17,7 +18,10 @@ export interface TelemetrySink {
 	started(model: string): void;
 	/** Characters of generated text/thinking just streamed. */
 	progress(chars: number): void;
-	completed(metrics: GenerationMetrics | undefined): void;
+	completed(
+		metrics: GenerationMetrics | undefined,
+		info?: { sawToolCalls?: boolean },
+	): void;
 	failed(): void;
 }
 
@@ -26,9 +30,6 @@ export interface CompletedGeneration {
 	timestamp: number;
 	metrics: GenerationMetrics;
 }
-
-/** Bootstrap heuristic: ~4 characters per token. */
-export const DEFAULT_TOKENS_PER_CHAR = 0.25;
 
 /** Rolling window the live estimate is measured over. */
 const WINDOW_MS = 2000;
@@ -43,6 +44,9 @@ interface Sample {
 
 export class GenerationTelemetry implements TelemetrySink {
 	private samples: Sample[] = [];
+	private readonly calibrator = new RatioCalibrator();
+	private ratio = this.calibrator.ratioFor("");
+	private charsStreamed = 0;
 	private readonly now: () => number;
 	private activeModel: string | undefined;
 	private lastCompleted: CompletedGeneration | undefined;
@@ -55,12 +59,15 @@ export class GenerationTelemetry implements TelemetrySink {
 		this.activeModel = model;
 		this.lastCompleted = undefined;
 		this.samples = [];
+		this.ratio = this.calibrator.ratioFor(model);
+		this.charsStreamed = 0;
 	}
 
 	progress(chars: number): void {
 		if (this.activeModel === undefined || !(chars > 0)) return;
 		const now = this.now();
-		this.samples.push({ t: now, tokens: chars * DEFAULT_TOKENS_PER_CHAR });
+		this.charsStreamed += chars;
+		this.samples.push({ t: now, tokens: chars * this.ratio });
 		this.prune(now);
 	}
 
@@ -88,11 +95,19 @@ export class GenerationTelemetry implements TelemetrySink {
 		return tokens / (elapsedMs / 1000);
 	}
 
-	completed(metrics: GenerationMetrics | undefined): void {
+	completed(
+		metrics: GenerationMetrics | undefined,
+		info: { sawToolCalls?: boolean } = {},
+	): void {
 		const model = this.activeModel;
 		this.activeModel = undefined;
 		this.samples = [];
 		if (model === undefined || metrics === undefined) return;
+		// eval_count includes tool-call tokens, which never stream as characters -
+		// a tool-call turn would teach a badly inflated ratio.
+		if (!info.sawToolCalls) {
+			this.calibrator.observe(model, metrics.outputTokens, this.charsStreamed);
+		}
 		this.lastCompleted = { model, timestamp: this.now(), metrics };
 	}
 

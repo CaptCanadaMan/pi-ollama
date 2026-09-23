@@ -770,7 +770,10 @@ export function streamOllama(
 			// Only an accepted response counts as a completed measurement - every
 			// reliability guard above has passed by this point.
 			report((t) =>
-				t.completed(finalChunk ? parseGenerationMetrics(finalChunk) : undefined),
+				t.completed(
+					finalChunk ? parseGenerationMetrics(finalChunk) : undefined,
+					{ sawToolCalls },
+				),
 			);
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });

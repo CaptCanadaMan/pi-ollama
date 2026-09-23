@@ -103,3 +103,49 @@ describe("live estimate - rolling window over streamed characters", () => {
 		expect(stalled).toBeLessThan(flowing / 2);
 	});
 });
+
+describe("live estimate - self-calibration from completed generations", () => {
+	// A model that really runs 2 chars/token (0.5 tok/char): the 4 chars/token
+	// bootstrap under-reads it by half until calibration catches up.
+	function generate(
+		c: ReturnType<typeof clocked>,
+		model: string,
+		info?: { sawToolCalls: boolean },
+	) {
+		c.telemetry.started(model);
+		c.telemetry.progress(4);
+		stream(c, 4, 100, 10); // 40 chars/s = 20 true tok/s
+		const live = c.telemetry.liveRate();
+		c.telemetry.completed(
+			{ outputTokens: 22, evalDurationNs: 1.1e9, tokensPerSecond: 20 },
+			info,
+		);
+		return live;
+	}
+
+	it("sharpens the estimate for a model as its generations complete", () => {
+		const c = clocked();
+		const first = generate(c, "dense-model");
+		for (let i = 0; i < 20; i++) generate(c, "dense-model");
+		const later = generate(c, "dense-model");
+
+		expect(first).toBeCloseTo(10); // bootstrap: half the truth
+		expect(later).toBeCloseTo(20, 0); // learned
+	});
+
+	it("doesn't carry one model's calibration over to another", () => {
+		const c = clocked();
+		for (let i = 0; i < 20; i++) generate(c, "dense-model");
+
+		expect(generate(c, "other-model")).toBeCloseTo(10);
+	});
+
+	it("learns nothing from tool-call turns (their tokens never stream as characters)", () => {
+		const c = clocked();
+		for (let i = 0; i < 20; i++) {
+			generate(c, "dense-model", { sawToolCalls: true });
+		}
+
+		expect(generate(c, "dense-model")).toBeCloseTo(10);
+	});
+});
