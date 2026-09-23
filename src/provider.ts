@@ -540,6 +540,7 @@ export function streamOllama(
 					if (m) {
 						// Thinking deltas
 						if (m.thinking !== undefined && m.thinking.length > 0) {
+							const thinkingDelta = m.thinking;
 							if (!currentBlock || currentBlock.type !== "thinking") {
 								finishBlock(currentBlock);
 								currentBlock = { type: "thinking", thinking: "" };
@@ -551,6 +552,7 @@ export function streamOllama(
 								});
 							}
 							currentBlock.thinking += m.thinking;
+							report((t) => t.progress(thinkingDelta.length));
 							stream.push({
 								type: "thinking_delta",
 								contentIndex: blockIndex(),
@@ -561,6 +563,7 @@ export function streamOllama(
 
 						// Text deltas
 						if (m.content !== undefined && m.content.length > 0) {
+							const textDelta = m.content;
 							if (!currentBlock || currentBlock.type !== "text") {
 								finishBlock(currentBlock);
 								currentBlock = { type: "text", text: "" };
@@ -572,6 +575,7 @@ export function streamOllama(
 								});
 							}
 							currentBlock.text += m.content;
+							report((t) => t.progress(textDelta.length));
 							stream.push({
 								type: "text_delta",
 								contentIndex: blockIndex(),

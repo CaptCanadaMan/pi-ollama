@@ -168,4 +168,36 @@ describe("provider → telemetry seam", () => {
 		expect(telemetry.takeCompleted()).toBeDefined();
 		expect(telemetry.takeCompleted()).toBeUndefined();
 	});
+
+	it("reports streamed text and thinking as progress, but not tool-call serialization", async () => {
+		const thinking = {
+			model: model.id,
+			created_at: "t",
+			message: { role: "assistant", content: "", thinking: "Hmm" },
+			done: false,
+		};
+		const toolCall = {
+			model: model.id,
+			created_at: "t",
+			message: {
+				role: "assistant",
+				content: "",
+				tool_calls: [{ function: { name: "read", arguments: { path: "a-long-path.txt" } } }],
+			},
+			done: false,
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				ndjsonResponse([thinking, textChunk("Hello"), toolCall, doneChunk(100, 5e8)]),
+			),
+		);
+		const telemetry = new GenerationTelemetry();
+		const progress = vi.spyOn(telemetry, "progress");
+
+		await run(telemetry);
+
+		const totalChars = progress.mock.calls.reduce((sum, [n]) => sum + n, 0);
+		expect(totalChars).toBe("Hmm".length + "Hello".length);
+	});
 });

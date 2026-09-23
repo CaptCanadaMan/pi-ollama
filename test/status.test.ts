@@ -120,3 +120,56 @@ describe("throughput status - exact figure at generation end", () => {
 		).not.toThrow();
 	});
 });
+
+describe("throughput status - live estimate while streaming", () => {
+	function liveSetup() {
+		let t = 1_000_000;
+		const now = () => t;
+		const pi = fakePi();
+		const telemetry = new GenerationTelemetry({ now });
+		registerThroughputStatus(pi, telemetry, { now });
+		const ctx = fakeCtx();
+		/** One streamed delta: ~1 token, 100ms later, then pi's message_update. */
+		const delta = () => {
+			t += 100;
+			telemetry.progress(4);
+			pi.fire("message_update", { message: ollamaMessage }, ctx);
+		};
+		return { pi, telemetry, ctx, delta };
+	}
+
+	it("shows a marked estimate as deltas stream", () => {
+		const { telemetry, ctx, delta } = liveSetup();
+		telemetry.started("gemma4:12b");
+		for (let i = 0; i < 10; i++) delta();
+
+		expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(STATUS_KEY, "≈10 tok/s");
+	});
+
+	it("updates at a readable cadence, not on every delta", () => {
+		const { telemetry, ctx, delta } = liveSetup();
+		telemetry.started("gemma4:12b");
+		for (let i = 0; i < 50; i++) delta(); // 5 seconds of streaming
+
+		const updates = ctx.ui.setStatus.mock.calls.length;
+		expect(updates).toBeGreaterThanOrEqual(5);
+		expect(updates).toBeLessThanOrEqual(15); // ~2-3 per second at most
+	});
+
+	it("hands over from the estimate to the exact figure when the message ends", () => {
+		const { pi, telemetry, ctx, delta } = liveSetup();
+		telemetry.started("gemma4:12b");
+		for (let i = 0; i < 10; i++) delta();
+		telemetry.completed({
+			outputTokens: 612,
+			evalDurationNs: 12_938_689_217,
+			tokensPerSecond: 47.3,
+		});
+		pi.fire("message_end", { message: ollamaMessage }, ctx);
+
+		expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
+			STATUS_KEY,
+			"47.3 tok/s · 612 tok",
+		);
+	});
+});

@@ -7,9 +7,15 @@
 // to "no status", never to a failed turn.
 
 import type { GenerationTelemetry } from "./telemetry.js";
-import { formatExactThroughput } from "./throughput.js";
+import {
+	formatEstimatedThroughput,
+	formatExactThroughput,
+} from "./throughput.js";
 
 export const STATUS_KEY = "ollama-throughput";
+
+/** Live-status cadence: readable, not flickering (message_update fires per delta). */
+const LIVE_UPDATE_INTERVAL_MS = 400;
 
 // Minimal structural types for the slice of pi's extension API used here.
 interface StatusContext {
@@ -45,8 +51,21 @@ function setStatus(ctx: StatusContext, text: string | undefined): void {
 export function registerThroughputStatus(
 	pi: StatusPi,
 	telemetry: GenerationTelemetry,
+	opts: { now?: () => number } = {},
 ): void {
 	if (typeof pi.on !== "function") return;
+	const now = opts.now ?? Date.now;
+	let lastLiveUpdate = 0;
+
+	pi.on("message_update", (event: MessageEvent, ctx) => {
+		if (!isOllamaAssistantMessage(event)) return;
+		const t = now();
+		if (t - lastLiveUpdate < LIVE_UPDATE_INTERVAL_MS) return;
+		const rate = telemetry.liveRate();
+		if (rate === undefined) return;
+		lastLiveUpdate = t;
+		setStatus(ctx, formatEstimatedThroughput(rate));
+	});
 
 	pi.on("message_end", (event: MessageEvent, ctx) => {
 		if (!isOllamaAssistantMessage(event)) return;
