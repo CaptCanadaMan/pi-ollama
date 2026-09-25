@@ -1,22 +1,26 @@
-// pi-ollama — native Ollama provider extension for pi coding agent.
+// pi-ollama - native Ollama provider extension for pi coding agent.
 //
 // Registers an "ollama" provider backed by Ollama's /api/chat endpoint
-// directly, bypassing the OpenAI-compat shim that drops tool_calls under
-// streaming (ollama#12557).
+// directly, so each request carries what the OpenAI-compatible endpoint can't
+// (num_ctx, think, keep_alive, truncate:false). Also wires up the startup
+// helpers: offering to start Ollama, API-key approval, and warm-up.
 //
 // Install:  pi install npm:pi-ollama
 // Refresh:  /ollama-refresh
 // Status:   /ollama-status
 // Details:  /ollama-info <model-id>
+// Warm-up:  /ollama-warm-up
 //
 // Environment variables:
-//   OLLAMA_HOST                  — Ollama server host[:port]. Default: localhost:11434
-//   OLLAMA_NATIVE_DEBUG          — Set to "1" to enable debug logging (writes to a file)
-//   OLLAMA_NATIVE_DEBUG_LOG      — Override default log path
+//   OLLAMA_HOST                  - Ollama server host[:port]. Default: localhost:11434
+//   OLLAMA_API_KEY               - Bearer token, sent only to OLLAMA_HOST once approved
+//   OLLAMA_NATIVE_WARM           - Warm-up. On by default; 0 switches it off
+//   OLLAMA_NATIVE_DEBUG          - Set to "1" to enable debug logging (writes to a file)
+//   OLLAMA_NATIVE_DEBUG_LOG      - Override default log path
 //                                  (default: ~/.pi/agent/cache/pi-ollama-debug.log)
-//   OLLAMA_NATIVE_DUMP_DIR       — Path to write req/res dump files for diagnostics
-//   OLLAMA_NATIVE_GHOST_RETRIES  — Ghost-token retry count. Default: 2
-//   OLLAMA_NATIVE_THROUGHPUT     — tok/s telemetry. On by default; 0 switches it off
+//   OLLAMA_NATIVE_DUMP_DIR       - Path to write req/res dump files for diagnostics
+//   OLLAMA_NATIVE_GHOST_RETRIES  - Ghost-token retry count. Default: 2
+//   OLLAMA_NATIVE_THROUGHPUT     - tok/s telemetry. On by default; 0 switches it off
 
 import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
 import { discoverModels, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";

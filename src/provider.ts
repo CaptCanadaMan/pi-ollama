@@ -1,9 +1,9 @@
 // Native Ollama /api/chat streaming provider.
 //
-// Talks directly to Ollama's NDJSON endpoint, bypassing the OpenAI-compat
-// shim at /v1/chat/completions which silently drops tool_calls from streamed
-// deltas (ollama#12557). This is the core of the extension — all other modules
-// exist to configure and feed this function.
+// Talks directly to Ollama's NDJSON endpoint and owns the whole request -
+// num_ctx, think, keep_alive, truncate:false - which the OpenAI-compatible
+// endpoint pi would otherwise use can't carry. This is the core of the
+// extension; the other modules exist to configure and feed this function.
 //
 // Reliability defences:
 //   Ghost-token retry — Ollama occasionally generates output tokens but streams
