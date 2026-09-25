@@ -28,45 +28,57 @@ export interface InferredCapabilities {
 	maxTokens: number;
 }
 
-// Model families known to support tool calling. Used as fallback when the
-// capabilities array is absent or incomplete.
+// Fallbacks for Ollama versions that don't report a capabilities array.
+// Only used then: a name guess must never override what Ollama says, because
+// sending `think` to a model that can't think gets the request rejected.
 const TOOL_FAMILIES = ["llama", "qwen", "mistral", "command", "granite", "nemotron"];
-
-// Name patterns that indicate native reasoning/thinking support.
 const REASONING_PATTERNS = [/\br1\b/i, /think/i, /reason/i, /gemma4/i, /deepseek/i, /qwq/i];
+
+type CapabilityFlags = Pick<InferredCapabilities, "tools" | "vision" | "reasoning">;
+
+/** The model reports at least one `think` value that turns thinking on. */
+function reportsThinking(thinking: OllamaThinking | undefined): boolean {
+	return thinking?.values.some((v) => v !== false) ?? false;
+}
+
+function fromCapabilities(
+	caps: string[],
+	thinking: OllamaThinking | undefined,
+): CapabilityFlags {
+	return {
+		tools: caps.includes("tools"),
+		vision: caps.includes("vision"),
+		reasoning: caps.includes("thinking") || reportsThinking(thinking),
+	};
+}
+
+function fromHeuristics(
+	modelId: string,
+	show: OllamaShowResponse,
+	thinking: OllamaThinking | undefined,
+): CapabilityFlags {
+	const family = (show.details?.family ?? "").toLowerCase();
+	const families = (show.details?.families ?? []).map((f) => f.toLowerCase());
+	return {
+		tools: TOOL_FAMILIES.some((f) => family.includes(f)),
+		vision: families.includes("clip"),
+		reasoning: reportsThinking(thinking) || REASONING_PATTERNS.some((p) => p.test(modelId)),
+	};
+}
 
 export function inferCapabilities(
 	modelId: string,
 	show: OllamaShowResponse,
 ): InferredCapabilities {
-	const caps = show.capabilities ?? [];
-	const family = (show.details?.family ?? "").toLowerCase();
-	const families = (show.details?.families ?? []).map((f) => f.toLowerCase());
-
-	const tools =
-		caps.includes("tools") ||
-		TOOL_FAMILIES.some((f) => family.includes(f));
-
-	const vision =
-		caps.includes("vision") ||
-		families.includes("clip") ||
-		caps.includes("image");
-
 	const thinking = parseThinking(show.thinking);
-
-	const reasoning =
-		caps.includes("thinking") ||
-		(thinking?.values.some((v) => v !== false) ?? false) ||
-		REASONING_PATTERNS.some((p) => p.test(modelId));
-
-	const contextWindow = extractContextWindow(show.model_info) ?? 32768;
+	const flags = show.capabilities
+		? fromCapabilities(show.capabilities, thinking)
+		: fromHeuristics(modelId, show, thinking);
 
 	return {
-		tools,
-		vision,
-		reasoning,
+		...flags,
 		thinking,
-		contextWindow,
+		contextWindow: extractContextWindow(show.model_info) ?? 32768,
 		maxTokens: 8192,
 	};
 }
