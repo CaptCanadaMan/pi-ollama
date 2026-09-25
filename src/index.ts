@@ -19,7 +19,7 @@
 //   OLLAMA_NATIVE_THROUGHPUT     — tok/s telemetry. On by default; 0 switches it off
 
 import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
-import { discoverModels, loadCache, type DiscoveredModel } from "./discovery.js";
+import { discoverModels, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";
 import { streamOllama } from "./provider.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
@@ -120,27 +120,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		);
 	}
 
-	// Seed from cache immediately so the provider is available at startup
-	// even if Ollama is slow or temporarily unavailable.
-	let models: DiscoveredModel[] = loadCache();
-
-	// Attempt a live discovery. On failure, fall back to the cached list.
-	try {
-		models = await discoverModels(settings.baseUrl);
-	} catch (e) {
-		if (models.length > 0) {
-			process.stderr.write(
-				`[pi-ollama] Ollama not reachable (${String(e)}). ` +
-					`Loaded ${models.length} model(s) from cache. Run /ollama-refresh when Ollama is available.\n`,
-			);
-		} else {
-			process.stderr.write(
-				`[pi-ollama] Ollama not reachable and no cache available (${String(e)}). ` +
-					`Run /ollama-refresh when Ollama is available.\n`,
-			);
-		}
-	}
-
 	await resolveStreamClass();
 
 	// tok/s telemetry: the provider reports into this, the status handlers pull
@@ -182,16 +161,34 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		providerRegistered = true;
 	};
 
-	registerProvider(models);
+	// The one refresh path, shared by startup and /ollama-refresh: discover
+	// live, keep the list for the next startup, register it.
+	let models: DiscoveredModel[] = [];
+	const refreshModels = async (): Promise<DiscoveredModel[]> => {
+		const fresh = await discoverModels(settings);
+		saveCache(fresh);
+		models = fresh;
+		registerProvider(fresh);
+		return fresh;
+	};
 
-	// Wire up commands. /ollama-refresh re-discovers and re-registers.
-	registerCommands(
-		pi,
-		settings,
-		() => models,
-		(fresh) => { models = fresh; },
-		registerProvider,
-	);
+	// Discovery's per-request timeouts bound this wait. If Ollama can't be
+	// reached, fall back to the cached list so the provider still registers.
+	try {
+		await refreshModels();
+	} catch (e) {
+		models = loadCache();
+		registerProvider(models);
+		process.stderr.write(
+			models.length > 0
+				? `[pi-ollama] Ollama not reachable (${String(e)}). ` +
+						`Loaded ${models.length} model(s) from cache. Run /ollama-refresh when Ollama is available.\n`
+				: `[pi-ollama] Ollama not reachable and no cache available (${String(e)}). ` +
+						`Run /ollama-refresh when Ollama is available.\n`,
+		);
+	}
+
+	registerCommands(pi, settings, () => models, refreshModels, registerProvider);
 }
 
 // ============================================================================

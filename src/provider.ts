@@ -19,6 +19,7 @@
 import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
 import { convertContext, type PiContext } from "./convert.js";
 import { describeOllamaError } from "./errors.js";
+import { openChat } from "./ollama-client.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 import type { TelemetrySink } from "./telemetry.js";
@@ -262,8 +263,7 @@ export function streamOllama(
 		};
 
 		try {
-			const baseUrl = (model.baseUrl || settings.baseUrl).replace(/\/+$/, "");
-			const url = `${baseUrl}/api/chat`;
+			const target = { baseUrl: model.baseUrl || settings.baseUrl };
 
 			const supportsVision = model.input?.includes("image") ?? false;
 			const { messages, tools } = convertContext(context, supportsVision);
@@ -299,14 +299,8 @@ export function streamOllama(
 				if (next !== undefined) body = next as OllamaRequest;
 			}
 
-			const headers: Record<string, string> = {
-				"Content-Type": "application/json",
-				...(model.headers ?? {}),
-				...(options?.headers ?? {}),
-			};
-
 			dbg("request", {
-				url,
+				baseUrl: target.baseUrl,
 				model: body.model,
 				messages: body.messages.length,
 				tools: body.tools?.length ?? 0,
@@ -331,11 +325,9 @@ export function streamOllama(
 			while (true) {
 				dumpId = dumpRequest(body);
 
-				const response = await fetch(url, {
-					method: "POST",
-					headers,
-					body: JSON.stringify(body),
+				const response = await openChat(target, body, {
 					signal: options?.signal,
+					headers: [model.headers, options?.headers],
 				});
 
 				if (options?.onResponse) {

@@ -1,13 +1,21 @@
-// Model discovery via Ollama's /api/tags and /api/show endpoints.
+// Model discovery via Ollama's /api/tags and /api/show endpoints, plus the
+// on-disk cache used when Ollama can't be reached at startup.
 //
-// Strategy: load from cache instantly on startup, then refresh in the
-// background (or on /ollama-refresh). This keeps startup fast even when
-// Ollama is slow to respond or temporarily unavailable.
+// Every request is bounded by ollama-client's timeouts and the /api/show
+// calls run in parallel, so a slow or hung server can't hold pi's startup.
+// Writing the cache is the caller's job (index.ts refreshModels), so
+// discovery itself has no side effects.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { inferCapabilities, type OllamaShowResponse } from "./capabilities.js";
+import { inferCapabilities } from "./capabilities.js";
+import {
+	listModels,
+	type OllamaTarget,
+	type RequestOptions,
+	showModel,
+} from "./ollama-client.js";
 import type { OllamaThinking } from "./thinking.js";
 
 export interface DiscoveredModel {
@@ -20,19 +28,6 @@ export interface DiscoveredModel {
 	thinking?: OllamaThinking;
 	contextWindow: number;
 	maxTokens: number;
-}
-
-interface OllamaTagEntry {
-	name: string;
-	size?: number;
-	details?: {
-		family?: string;
-		parameter_size?: string;
-	};
-}
-
-interface OllamaTagsResponse {
-	models: OllamaTagEntry[];
 }
 
 const CACHE_PATH = join(
@@ -52,7 +47,9 @@ export function loadCache(): DiscoveredModel[] {
 	}
 }
 
-function saveCache(models: DiscoveredModel[]): void {
+/** Write a discovered model list for the next startup. An empty list is not saved. */
+export function saveCache(models: DiscoveredModel[]): void {
+	if (models.length === 0) return;
 	try {
 		mkdirSync(join(homedir(), ".pi", "agent", "cache"), { recursive: true });
 		writeFileSync(CACHE_PATH, JSON.stringify(models, null, 2));
@@ -61,49 +58,38 @@ function saveCache(models: DiscoveredModel[]): void {
 	}
 }
 
-export async function discoverModels(baseUrl: string): Promise<DiscoveredModel[]> {
-	const tagsRes = await fetch(`${baseUrl}/api/tags`);
-	if (!tagsRes.ok) {
-		throw new Error(`Ollama /api/tags returned HTTP ${tagsRes.status}`);
+export async function discoverModels(
+	target: OllamaTarget,
+	options: RequestOptions = {},
+): Promise<DiscoveredModel[]> {
+	const ids = await listModels(target, options);
+
+	// All at once: /api/show is a metadata read, and a slow one shouldn't hold
+	// up the rest. Promise.all keeps /api/tags order.
+	return Promise.all(ids.map((id) => describeModel(target, id, options)));
+}
+
+async function describeModel(
+	target: OllamaTarget,
+	id: string,
+	options: RequestOptions,
+): Promise<DiscoveredModel> {
+	try {
+		const caps = inferCapabilities(id, await showModel(target, id, options));
+		return {
+			id,
+			name: friendlyName(id),
+			tools: caps.tools,
+			vision: caps.vision,
+			reasoning: caps.reasoning,
+			...(caps.thinking && { thinking: caps.thinking }),
+			contextWindow: caps.contextWindow,
+			maxTokens: caps.maxTokens,
+		};
+	} catch {
+		// /api/show failed for this model — include it with conservative defaults.
+		return minimal(id);
 	}
-	const { models: entries } = (await tagsRes.json()) as OllamaTagsResponse;
-
-	const models: DiscoveredModel[] = [];
-
-	for (const entry of entries) {
-		try {
-			const showRes = await fetch(`${baseUrl}/api/show`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name: entry.name }),
-			});
-
-			if (!showRes.ok) {
-				models.push(minimal(entry.name));
-				continue;
-			}
-
-			const show = (await showRes.json()) as OllamaShowResponse;
-			const caps = inferCapabilities(entry.name, show);
-
-			models.push({
-				id: entry.name,
-				name: friendlyName(entry.name),
-				tools: caps.tools,
-				vision: caps.vision,
-				reasoning: caps.reasoning,
-				...(caps.thinking && { thinking: caps.thinking }),
-				contextWindow: caps.contextWindow,
-				maxTokens: caps.maxTokens,
-			});
-		} catch {
-			// /api/show failed for this model — include it with conservative defaults.
-			models.push(minimal(entry.name));
-		}
-	}
-
-	if (models.length > 0) saveCache(models);
-	return models;
 }
 
 function minimal(id: string): DiscoveredModel {

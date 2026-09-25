@@ -7,9 +7,9 @@
 // of a session. notify() routes through pi's render loop so output integrates
 // cleanly with the TUI regardless of when it fires.
 
-import type { OllamaShowResponse } from "./capabilities.js";
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
-import { discoverModels, type DiscoveredModel } from "./discovery.js";
+import type { DiscoveredModel } from "./discovery.js";
+import { listModels, runningModels, showModel } from "./ollama-client.js";
 import { parseKeepAlive, type OllamaExtensionSettings } from "./settings.js";
 import {
 	formatSessionStats,
@@ -17,14 +17,6 @@ import {
 	summarizeByModel,
 } from "./stats.js";
 import { parseThinking, thinkingSummary } from "./thinking.js";
-
-interface OllamaPs {
-	models?: Array<{
-		name: string;
-		size_vram?: number;
-		expires_at?: string;
-	}>;
-}
 
 // Minimal structural type for the ctx.ui surface we use.
 // The real type is ExtensionCommandContext from @earendil-works/pi-coding-agent.
@@ -58,14 +50,27 @@ interface Pi {
 	): void;
 }
 
+/** One model as a row: id, context window and capability flags. */
+function formatModelRow(m: DiscoveredModel): string {
+	const flags = [m.tools && "tools", m.vision && "vision", m.reasoning && "reasoning"]
+		.filter(Boolean)
+		.join(", ");
+	return `${m.id.padEnd(32)} ctx:${m.contextWindow.toLocaleString()}  [${flags || "basic"}]`;
+}
+
+/** An error's message without the "Error:" prefix String() would add. */
+function errorText(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
+}
+
 // Called from index.ts to register all commands.
-// The `getModels` callback gives commands access to the current model list
-// without creating a circular dependency.
+// The callbacks give commands access to the current model list and the one
+// refresh path (discover, cache, register) without a circular dependency.
 export function registerCommands(
 	pi: Pi,
 	settings: OllamaExtensionSettings,
 	getModels: () => DiscoveredModel[],
-	setModels: (models: DiscoveredModel[]) => void,
+	refresh: () => Promise<DiscoveredModel[]>,
 	reregisterProvider: (models: DiscoveredModel[]) => void,
 ): void {
 	pi.registerCommand("ollama-status", {
@@ -80,54 +85,32 @@ export function registerCommands(
 					: "keep_alive: defer to server (default)",
 			);
 
-			// Check /api/tags to confirm Ollama is reachable.
+			// Listing models confirms Ollama is reachable and answering.
 			try {
-				const tagsRes = await fetch(`${baseUrl}/api/tags`);
-				if (!tagsRes.ok) {
-					ctx.ui.notify(
-						`Ollama not reachable (HTTP ${tagsRes.status}) at ${baseUrl}`,
-						"error",
-					);
-					return;
-				}
+				await listModels(settings);
 				const registered = getModels();
 				lines.push(
 					`✓ Ollama reachable — ${registered.length} model(s) registered`,
 				);
-				for (const m of registered) {
-					const flags = [
-						m.tools ? "tools" : null,
-						m.vision ? "vision" : null,
-						m.reasoning ? "reasoning" : null,
-					]
-						.filter(Boolean)
-						.join(", ");
-					lines.push(
-						`  ${m.id.padEnd(32)} ctx:${m.contextWindow.toLocaleString()}  [${flags || "basic"}]`,
-					);
-				}
+				for (const m of registered) lines.push(`  ${formatModelRow(m)}`);
 			} catch (e) {
-				ctx.ui.notify(`Cannot reach Ollama: ${String(e)}`, "error");
+				ctx.ui.notify(`Ollama check failed at ${baseUrl}: ${errorText(e)}`, "error");
 				return;
 			}
 
 			// Show currently loaded models via /api/ps (optional).
 			try {
-				const psRes = await fetch(`${baseUrl}/api/ps`);
-				if (psRes.ok) {
-					const ps = (await psRes.json()) as OllamaPs;
-					const running = ps.models ?? [];
-					if (running.length > 0) {
-						lines.push(``, `Currently loaded in memory:`);
-						for (const m of running) {
-							const vram = m.size_vram
-								? ` (${(m.size_vram / 1e9).toFixed(1)} GB VRAM)`
-								: "";
-							lines.push(`  ${m.name}${vram}`);
-						}
-					} else {
-						lines.push(``, `No models currently loaded in memory`);
+				const running = await runningModels(settings);
+				if (running.length > 0) {
+					lines.push(``, `Currently loaded in memory:`);
+					for (const m of running) {
+						const vram = m.size_vram
+							? ` (${(m.size_vram / 1e9).toFixed(1)} GB VRAM)`
+							: "";
+						lines.push(`  ${m.name}${vram}`);
 					}
+				} else {
+					lines.push(``, `No models currently loaded in memory`);
 				}
 			} catch {
 				// /api/ps is optional — older Ollama versions may not have it.
@@ -142,15 +125,13 @@ export function registerCommands(
 			"Re-discover models from Ollama and re-register the provider",
 		handler: async (_args, ctx) => {
 			try {
-				const models = await discoverModels(settings.baseUrl);
-				setModels(models);
-				reregisterProvider(models);
+				const models = await refresh();
 				ctx.ui.notify(
 					`Refreshed model list from ${settings.baseUrl} — ${models.length} model(s) registered`,
 					"info",
 				);
 			} catch (e) {
-				ctx.ui.notify(`Refresh failed: ${String(e)}`, "error");
+				ctx.ui.notify(`Refresh failed: ${errorText(e)}`, "error");
 			}
 		},
 	});
@@ -178,14 +159,7 @@ export function registerCommands(
 				const labelToId = new Map<string, string>();
 				const options: string[] = [];
 				for (const m of registered) {
-					const flags = [
-						m.tools ? "tools" : null,
-						m.vision ? "vision" : null,
-						m.reasoning ? "reasoning" : null,
-					]
-						.filter(Boolean)
-						.join(", ");
-					const label = `${m.id.padEnd(32)} ctx:${m.contextWindow.toLocaleString()}  [${flags || "basic"}]`;
+					const label = formatModelRow(m);
 					labelToId.set(label, m.id);
 					options.push(label);
 				}
@@ -201,19 +175,7 @@ export function registerCommands(
 			}
 
 			try {
-				const res = await fetch(`${settings.baseUrl}/api/show`, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ name: chosen }),
-				});
-				if (!res.ok) {
-					ctx.ui.notify(
-						`/api/show returned HTTP ${res.status} for ${chosen}`,
-						"error",
-					);
-					return;
-				}
-				const show = (await res.json()) as OllamaShowResponse;
+				const show = await showModel(settings, chosen);
 				// Which pi thinking levels this model gets, and anything it
 				// accepts that pi has no level name for (gh#13).
 				const thinking = parseThinking(show.thinking);
@@ -226,7 +188,7 @@ export function registerCommands(
 					"info",
 				);
 			} catch (e) {
-				ctx.ui.notify(`Failed: ${String(e)}`, "error");
+				ctx.ui.notify(`Couldn't show ${chosen}: ${errorText(e)}`, "error");
 			}
 		},
 	});

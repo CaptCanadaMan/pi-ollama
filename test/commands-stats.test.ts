@@ -16,7 +16,7 @@ function registered(throughput: boolean) {
 		ghostRetries: 2,
 		throughput,
 	};
-	registerCommands(pi, settings, () => [], () => undefined, () => undefined);
+	registerCommands(pi, settings, () => [], async () => [], () => undefined);
 	return handlers;
 }
 
