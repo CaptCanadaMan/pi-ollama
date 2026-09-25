@@ -66,6 +66,16 @@ function fromHeuristics(
 	};
 }
 
+/**
+ * Whether Ollama can chat with this model. Ollama marks a model either
+ * "embedding" or "completion" and refuses chat without "completion", so
+ * embedding and image-generation models are out. With no capabilities
+ * array (older Ollama) there's nothing to judge by, so the model stays.
+ */
+export function canChat(show: OllamaShowResponse): boolean {
+	return !show.capabilities || show.capabilities.includes("completion");
+}
+
 export function inferCapabilities(
 	modelId: string,
 	show: OllamaShowResponse,

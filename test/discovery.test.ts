@@ -131,6 +131,29 @@ describe("discoverModels", () => {
 		]);
 	});
 
+	it.each([
+		["an embedding model", ["embedding"]],
+		["an image-generation model", ["image"]],
+	])("leaves out %s, which Ollama can't chat with", async (_kind, capabilities) => {
+		stubOllama(["gemma4:e4b", "other:1b", "nemotron-cascade-2:latest"], {
+			"gemma4:e4b": { capabilities: ["completion", "tools"] },
+			"other:1b": { capabilities },
+			"nemotron-cascade-2:latest": { capabilities: ["completion", "tools"] },
+		});
+
+		const models = await discoverModels(target);
+
+		expect(models.map((m) => m.id)).toEqual(["gemma4:e4b", "nemotron-cascade-2:latest"]);
+	});
+
+	it("keeps a model when an older Ollama reports no capabilities to judge by", async () => {
+		stubOllama(["llama3.1:8b"], { "llama3.1:8b": { details: { family: "llama" } } });
+
+		const models = await discoverModels(target);
+
+		expect(models.map((m) => m.id)).toEqual(["llama3.1:8b"]);
+	});
+
 	it("fails with what Ollama said when it can't list models", async () => {
 		stubOllama(async () => new Response('{"error":"server busy"}', { status: 503 }), {});
 

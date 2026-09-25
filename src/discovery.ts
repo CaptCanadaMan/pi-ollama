@@ -9,7 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { inferCapabilities } from "./capabilities.js";
+import { canChat, inferCapabilities } from "./capabilities.js";
 import {
 	listModels,
 	type OllamaTarget,
@@ -66,16 +66,20 @@ export async function discoverModels(
 
 	// All at once: /api/show is a metadata read, and a slow one shouldn't hold
 	// up the rest. Promise.all keeps /api/tags order.
-	return Promise.all(ids.map((id) => describeModel(target, id, options)));
+	const described = await Promise.all(ids.map((id) => describeModel(target, id, options)));
+	return described.filter((m): m is DiscoveredModel => m !== undefined);
 }
 
+/** The model as pi should see it, or undefined when Ollama says it can't chat. */
 async function describeModel(
 	target: OllamaTarget,
 	id: string,
 	options: RequestOptions,
-): Promise<DiscoveredModel> {
+): Promise<DiscoveredModel | undefined> {
 	try {
-		const caps = inferCapabilities(id, await showModel(target, id, options));
+		const show = await showModel(target, id, options);
+		if (!canChat(show)) return undefined;
+		const caps = inferCapabilities(id, show);
 		return {
 			id,
 			name: friendlyName(id),
