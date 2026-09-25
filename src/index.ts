@@ -21,6 +21,7 @@
 import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
 import { discoverModels, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";
 import { streamOllama } from "./provider.js";
+import { registerApiKeyApproval } from "./api-key-approval.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
 import { registerThroughputStatus, type StatusPi } from "./status.js";
@@ -50,6 +51,9 @@ interface ProviderModel {
 }
 
 interface ExtensionAPI extends StatusPi {
+	// pi hands every event handler the full context; each module declares only
+	// the slice it uses, so this accepts any of their handler shapes.
+	on?: (event: string, handler: (event: never, ctx: never) => unknown) => void;
 	registerProvider(
 		name: string,
 		config: {
@@ -189,6 +193,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	}
 
 	registerCommands(pi, settings, () => models, refreshModels, registerProvider);
+	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
 }
 
 // ============================================================================

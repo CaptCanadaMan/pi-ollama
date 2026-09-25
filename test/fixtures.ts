@@ -55,6 +55,7 @@ export function runStream(
 	turn: {
 		model?: Parameters<typeof streamOllama>[0];
 		options?: Parameters<typeof streamOllama>[2];
+		settings?: Partial<Parameters<typeof streamOllama>[3]>;
 	} = {},
 ): Promise<TerminalEvent> {
 	return new Promise((resolve) => {
@@ -71,7 +72,7 @@ export function runStream(
 			turn.model ?? model,
 			context,
 			turn.options,
-			settings,
+			{ ...settings, ...turn.settings },
 			FakeStream,
 			telemetry,
 		);

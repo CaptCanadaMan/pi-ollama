@@ -154,6 +154,28 @@ describe("discoverModels", () => {
 		expect(models.map((m) => m.id)).toEqual(["llama3.1:8b"]);
 	});
 
+	it("sends the approved API key on every discovery request", async () => {
+		const fetchMock = stubOllama(["gemma4:e4b"], {
+			"gemma4:e4b": { capabilities: ["completion"] },
+		});
+
+		await discoverModels({ ...target, apiKey: "sk-home" });
+
+		const auth = fetchMock.mock.calls.map(
+			([, init]) => new Headers(init?.headers).get("authorization"),
+		);
+		expect(auth).toEqual(["Bearer sk-home", "Bearer sk-home"]);
+	});
+
+	it("says the key was rejected, without repeating it, when the server refuses it", async () => {
+		stubOllama(async () => new Response('{"error":"invalid token"}', { status: 401 }), {});
+
+		const failure = discoverModels({ ...target, apiKey: "sk-home" });
+
+		await expect(failure).rejects.toThrow(/key in OLLAMA_API_KEY was rejected/);
+		await expect(failure).rejects.not.toThrow(/sk-home/);
+	});
+
 	it("fails with what Ollama said when it can't list models", async () => {
 		stubOllama(async () => new Response('{"error":"server busy"}', { status: 503 }), {});
 

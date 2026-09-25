@@ -20,11 +20,22 @@ const CONFIG_PATH = join(
 	"pi-ollama-config.json",
 );
 
+/**
+ * Which host the key in OLLAMA_API_KEY was approved for. Only a fingerprint
+ * of the key is stored, never the key itself.
+ */
+export interface ApiKeyApproval {
+	host: string;
+	fingerprint: string;
+}
+
 export interface PersistedConfig {
 	/** User-set context length override (set via /ollama-context). */
 	contextLength?: number;
 	/** User-set keep_alive override (set via /ollama-keep-alive). Absent = defer to the server. */
 	keepAlive?: string | number;
+	/** The host OLLAMA_API_KEY was approved for (see ApiKeyApproval). */
+	apiKeyApproval?: ApiKeyApproval;
 }
 
 export function loadPersistedConfig(): PersistedConfig {

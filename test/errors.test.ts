@@ -1,4 +1,4 @@
-import { isContextOverflow } from "@earendil-works/pi-ai";
+import { isContextOverflow, isRetryableAssistantError } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { describeOllamaError } from "../src/errors.js";
 
@@ -24,7 +24,16 @@ const chat = { endpoint: "/api/chat", status: 400, numCtx: 2048 };
 
 /** pi's own verdict: would pi compact and retry on this error message? */
 function piSeesOverflow(errorMessage: string): boolean {
-	return isContextOverflow({
+	return isContextOverflow(erroredMessage(errorMessage));
+}
+
+/** pi's own verdict: would pi retry the turn on this error message? */
+function piWouldRetry(errorMessage: string): boolean {
+	return isRetryableAssistantError(erroredMessage(errorMessage));
+}
+
+function erroredMessage(errorMessage: string) {
+	return {
 		role: "assistant",
 		content: [],
 		api: "ollama-native",
@@ -41,7 +50,7 @@ function piSeesOverflow(errorMessage: string): boolean {
 		stopReason: "error",
 		errorMessage,
 		timestamp: 0,
-	} as Parameters<typeof isContextOverflow>[0]);
+	} as Parameters<typeof isContextOverflow>[0];
 }
 
 // pi compacts and retries a turn only when isContextOverflow matches the
@@ -114,5 +123,28 @@ describe("describeOllamaError - other failures stay what they are", () => {
 	it("keeps a huge error body (e.g. an HTML error page) from flooding the message", () => {
 		const msg = describeOllamaError("x".repeat(20_000), { endpoint: "/api/chat", status: 500 });
 		expect(msg.length).toBeLessThan(600);
+	});
+});
+
+describe("describeOllamaError - a server that wants a key", () => {
+	it("tells the user to set OLLAMA_API_KEY when none was sent, and pi doesn't retry", () => {
+		const msg = describeOllamaError('{"error":"unauthorized"}', {
+			endpoint: "/api/chat",
+			status: 401,
+			apiKeySent: false,
+		});
+		expect(msg).toContain("OLLAMA_API_KEY");
+		expect(msg).toContain("unauthorized");
+		expect(piWouldRetry(msg)).toBe(false);
+	});
+
+	it("says the key was rejected when one was sent, and pi doesn't retry", () => {
+		const msg = describeOllamaError('{"error":"invalid token"}', {
+			endpoint: "/api/tags",
+			status: 403,
+			apiKeySent: true,
+		});
+		expect(msg).toContain("The key in OLLAMA_API_KEY was rejected");
+		expect(piWouldRetry(msg)).toBe(false);
 	});
 });

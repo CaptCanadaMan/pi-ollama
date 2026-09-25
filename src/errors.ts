@@ -66,6 +66,8 @@ export interface OllamaErrorContext {
 	status?: number;
 	/** The num_ctx the request carried, for the overflow hint. */
 	numCtx?: number;
+	/** Whether the request carried the API key, for the auth hint. */
+	apiKeySent?: boolean;
 }
 
 export function describeOllamaError(raw: string, ctx: OllamaErrorContext): string {
@@ -79,7 +81,18 @@ export function describeOllamaError(raw: string, ctx: OllamaErrorContext): strin
 		);
 	}
 	const detail = text.slice(0, MAX_DETAIL_CHARS);
+	if (ctx.status === 401 || ctx.status === 403) {
+		const hint = ctx.apiKeySent
+			? "The key in OLLAMA_API_KEY was rejected - check it's the right one for this server."
+			: "This server needs an API key: set OLLAMA_API_KEY.";
+		return `Ollama ${ctx.endpoint} refused the request (HTTP ${ctx.status}): ${detail}. ${hint}`;
+	}
 	return ctx.status !== undefined
 		? `Ollama ${ctx.endpoint} returned HTTP ${ctx.status}: ${detail}`
 		: `Ollama returned error: ${detail}`;
+}
+
+/** An error's message without the "Error:" prefix String() would add. */
+export function errorText(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
 }

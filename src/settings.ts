@@ -16,7 +16,8 @@
 //                                /ollama-stats). On by default; set to 0 / false /
 //                                off / no to switch the whole feature off.
 
-import { loadPersistedConfig } from "./config.js";
+import { createHash } from "node:crypto";
+import { type ApiKeyApproval, loadPersistedConfig } from "./config.js";
 
 export interface OllamaExtensionSettings {
 	/** Base URL of the Ollama server, e.g. http://localhost:11434 */
@@ -48,6 +49,13 @@ export interface OllamaExtensionSettings {
 	contextLength?: number;
 	/** tok/s telemetry (status + session records). Default: true. */
 	throughput: boolean;
+	/**
+	 * The API key sent as a bearer token to the configured Ollama. Present
+	 * only once the key in OLLAMA_API_KEY is approved for this host.
+	 */
+	apiKey?: string;
+	/** Whether OLLAMA_API_KEY is unset, approved for this host, or waiting on approval. */
+	apiKeyStatus: ApiKeyStatus;
 }
 
 /** On unless explicitly switched off - an unrecognized value leaves it on. */
@@ -96,12 +104,37 @@ export function resolveKeepAlive(
 	return parsed;
 }
 
+/** A short, one-way fingerprint of an API key: enough to notice a change, useless to an attacker. */
+export function keyFingerprint(key: string): string {
+	return createHash("sha256").update(key).digest("hex").slice(0, 16);
+}
+
+export type ApiKeyStatus = "none" | "approved" | "unapproved";
+
+/**
+ * Decide whether the key in OLLAMA_API_KEY may be sent to this host: only
+ * when it was approved for exactly this host and is the same key.
+ */
+export function resolveApiKey(
+	envRaw: string | undefined,
+	baseUrl: string,
+	approval: ApiKeyApproval | undefined,
+): { apiKey?: string; apiKeyStatus: ApiKeyStatus } {
+	const key = envRaw?.trim();
+	if (!key) return { apiKeyStatus: "none" };
+	if (approval?.host === baseUrl && approval.fingerprint === keyFingerprint(key)) {
+		return { apiKey: key, apiKeyStatus: "approved" };
+	}
+	return { apiKeyStatus: "unapproved" };
+}
+
 export function loadSettings(): OllamaExtensionSettings {
 	// OLLAMA_HOST may be bare "host:port" or already include a protocol.
 	const rawHost = process.env.OLLAMA_HOST ?? "localhost:11434";
-	const baseUrl = rawHost.startsWith("http")
-		? rawHost
-		: `http://${rawHost}`;
+	const baseUrl = (rawHost.startsWith("http") ? rawHost : `http://${rawHost}`).replace(
+		/\/+$/,
+		"",
+	);
 
 	const rawRetries = process.env.OLLAMA_NATIVE_GHOST_RETRIES;
 	const ghostRetries = (() => {
@@ -123,11 +156,12 @@ export function loadSettings(): OllamaExtensionSettings {
 	const contextLength = persistedContextLength ?? envContextLength;
 
 	return {
-		baseUrl: baseUrl.replace(/\/+$/, ""),
+		baseUrl,
 		keepAlive: resolveKeepAlive(persisted.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
 		numCtx: 32768,
 		ghostRetries,
 		contextLength,
 		throughput: resolveThroughputEnabled(process.env.OLLAMA_NATIVE_THROUGHPUT),
+		...resolveApiKey(process.env.OLLAMA_API_KEY, baseUrl, persisted.apiKeyApproval),
 	};
 }

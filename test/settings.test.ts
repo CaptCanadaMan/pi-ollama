@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+	keyFingerprint,
 	parseKeepAlive,
+	resolveApiKey,
 	resolveKeepAlive,
 	resolveThroughputEnabled,
 } from "../src/settings.js";
@@ -54,6 +56,32 @@ describe("resolveKeepAlive — persisted → env → defer-to-server", () => {
 
 	it("an invalid env value resolves to undefined (defer), never a fallback constant", () => {
 		expect(resolveKeepAlive(undefined, "banana")).toBeUndefined();
+	});
+});
+
+describe("resolveApiKey - OLLAMA_API_KEY is only used for the host it was approved for", () => {
+	const home = "http://ollama.home:11434";
+
+	it("uses a key approved for this host", () => {
+		const approval = { host: home, fingerprint: keyFingerprint("sk-home") };
+		expect(resolveApiKey("sk-home", home, approval)).toEqual({
+			apiKey: "sk-home",
+			apiKeyStatus: "approved",
+		});
+	});
+
+	it.each([
+		["the host changed", { host: "https://ollama.com", fingerprint: keyFingerprint("sk-home") }],
+		["the key changed", { host: home, fingerprint: keyFingerprint("sk-old") }],
+		["it was never approved", undefined],
+	])("holds the key back when %s", (_why, approval) => {
+		expect(resolveApiKey("sk-home", home, approval)).toEqual({ apiKeyStatus: "unapproved" });
+	});
+
+	it("has nothing to use or ask about when no key is set, or it's blank", () => {
+		for (const raw of [undefined, "", "   "]) {
+			expect(resolveApiKey(raw, home, undefined)).toEqual({ apiKeyStatus: "none" });
+		}
 	});
 });
 

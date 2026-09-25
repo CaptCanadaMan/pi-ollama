@@ -9,8 +9,9 @@
 
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import type { DiscoveredModel } from "./discovery.js";
+import { errorText } from "./errors.js";
 import { listModels, runningModels, showModel } from "./ollama-client.js";
-import { parseKeepAlive, type OllamaExtensionSettings } from "./settings.js";
+import { type ApiKeyStatus, parseKeepAlive, type OllamaExtensionSettings } from "./settings.js";
 import {
 	formatSessionStats,
 	readGenerationRecords,
@@ -50,17 +51,21 @@ interface Pi {
 	): void;
 }
 
+// What /ollama-status says about OLLAMA_API_KEY. Never the key itself; and
+// nothing at all when no key is set, which is the normal local setup.
+const API_KEY_STATUS_LINES: Record<ApiKeyStatus, string | undefined> = {
+	none: undefined,
+	approved: "API key: approved for this host (OLLAMA_API_KEY)",
+	unapproved:
+		"API key: set in OLLAMA_API_KEY but not approved for this host - not sent. Restart pi to approve it.",
+};
+
 /** One model as a row: id, context window and capability flags. */
 function formatModelRow(m: DiscoveredModel): string {
 	const flags = [m.tools && "tools", m.vision && "vision", m.reasoning && "reasoning"]
 		.filter(Boolean)
 		.join(", ");
 	return `${m.id.padEnd(32)} ctx:${m.contextWindow.toLocaleString()}  [${flags || "basic"}]`;
-}
-
-/** An error's message without the "Error:" prefix String() would add. */
-function errorText(e: unknown): string {
-	return e instanceof Error ? e.message : String(e);
 }
 
 // Called from index.ts to register all commands.
@@ -84,6 +89,8 @@ export function registerCommands(
 					? `keep_alive: ${settings.keepAlive} (override — sent on every request)`
 					: "keep_alive: defer to server (default)",
 			);
+			const keyLine = API_KEY_STATUS_LINES[settings.apiKeyStatus];
+			if (keyLine) lines.push(keyLine);
 
 			// Listing models confirms Ollama is reachable and answering.
 			try {

@@ -19,7 +19,7 @@
 import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
 import { convertContext, type PiContext } from "./convert.js";
 import { describeOllamaError } from "./errors.js";
-import { openChat } from "./ollama-client.js";
+import { openChat, targetFor } from "./ollama-client.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 import type { TelemetrySink } from "./telemetry.js";
@@ -263,7 +263,7 @@ export function streamOllama(
 		};
 
 		try {
-			const target = { baseUrl: model.baseUrl || settings.baseUrl };
+			const target = targetFor(settings, model.baseUrl);
 
 			const supportsVision = model.input?.includes("image") ?? false;
 			const { messages, tools } = convertContext(context, supportsVision);
@@ -349,6 +349,7 @@ export function streamOllama(
 							endpoint: "/api/chat",
 							status: response.status,
 							numCtx,
+							apiKeySent: Boolean(target.apiKey),
 						}),
 					);
 				}

@@ -48,6 +48,48 @@ describe("streamOllama - the chat request", () => {
 		expect(headers.get("x-trace")).toBe("turn");
 	});
 
+	it("carries the approved API key as a bearer token", async () => {
+		const fetchMock = stubChat();
+
+		await runStream({ messages: [user] }, undefined, { settings: { apiKey: "sk-home" } });
+
+		const headers = new Headers(fetchMock.mock.calls[0]![1].headers);
+		expect(headers.get("authorization")).toBe("Bearer sk-home");
+	});
+
+	it("never sends the key to a model that points at a different server", async () => {
+		const fetchMock = stubChat();
+
+		await runStream({ messages: [user] }, undefined, {
+			model: { ...model, baseUrl: "http://elsewhere:11434" },
+			settings: { apiKey: "sk-home" },
+		});
+
+		expect(new Headers(fetchMock.mock.calls[0]![1].headers).has("authorization")).toBe(false);
+	});
+
+	it("a rejected key ends the turn with a message saying so, without the key", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response('{"error":"invalid token"}', { status: 401 })),
+		);
+
+		const end = await runStream({ messages: [user] }, undefined, {
+			settings: { apiKey: "sk-home" },
+		});
+
+		expect(end.error?.errorMessage).toMatch(/key in OLLAMA_API_KEY was rejected/);
+		expect(end.error?.errorMessage).not.toContain("sk-home");
+	});
+
+	it("sends no Authorization header when there's no approved key", async () => {
+		const fetchMock = stubChat();
+
+		await runStream({ messages: [user] });
+
+		expect(new Headers(fetchMock.mock.calls[0]![1].headers).has("authorization")).toBe(false);
+	});
+
 	it("is cancelled when the turn is aborted, and the turn ends as aborted", async () => {
 		vi.stubGlobal(
 			"fetch",

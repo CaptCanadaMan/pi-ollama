@@ -17,12 +17,19 @@ const gemma: DiscoveredModel = {
 };
 
 /** Run one command with typed args; resolve with its single notification. */
-function command(name: string, models: DiscoveredModel[], ui: object = {}) {
+function command(name: string, models: DiscoveredModel[], ui: object = {}, overrides = {}) {
 	const handlers = new Map<string, Handler>();
 	const pi = {
 		registerCommand: (n: string, config: { handler: Handler }) => handlers.set(n, config.handler),
 	};
-	const settings = { baseUrl, numCtx: 32768, ghostRetries: 2, throughput: true };
+	const settings = {
+		baseUrl,
+		numCtx: 32768,
+		ghostRetries: 2,
+		throughput: true,
+		apiKeyStatus: "none" as const,
+		...overrides,
+	};
 	registerCommands(pi, settings, () => models, async () => models, () => undefined);
 	return async (args = "") => {
 		const notify = vi.fn();
@@ -73,6 +80,28 @@ describe("/ollama-status", () => {
 		expect(level).toBe("error");
 		expect(text).toContain(baseUrl);
 		expect(text).toContain("Ollama /api/tags returned HTTP 503: server busy");
+	});
+
+	it("says an approved API key is in use, without showing it", async () => {
+		stubServer(async () => Response.json({ models: [] }));
+
+		const { text } = await command("ollama-status", [], {}, {
+			apiKey: "sk-home",
+			apiKeyStatus: "approved",
+		})();
+
+		expect(text).toContain("API key: approved for this host (OLLAMA_API_KEY)");
+		expect(text).not.toContain("sk-home");
+	});
+
+	it("says when a key is set but held back until approved for this host", async () => {
+		stubServer(async () => Response.json({ models: [] }));
+
+		const { text } = await command("ollama-status", [], {}, { apiKeyStatus: "unapproved" })();
+
+		expect(text).toContain(
+			"API key: set in OLLAMA_API_KEY but not approved for this host - not sent. Restart pi to approve it.",
+		);
 	});
 
 	it("reports an error when there's no Ollama to talk to", async () => {

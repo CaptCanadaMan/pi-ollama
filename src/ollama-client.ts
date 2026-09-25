@@ -5,9 +5,10 @@
 import type { OllamaShowResponse } from "./capabilities.js";
 import { describeOllamaError } from "./errors.js";
 
-/** Where an Ollama server lives. */
+/** Where an Ollama server lives, and the key it expects, if any. */
 export interface OllamaTarget {
 	baseUrl: string;
+	apiKey?: string;
 }
 
 export interface RequestOptions {
@@ -17,8 +18,33 @@ export interface RequestOptions {
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
+const trimSlashes = (baseUrl: string) => baseUrl.replace(/\/+$/, "");
+
 function url(target: OllamaTarget, path: string): string {
-	return `${target.baseUrl.replace(/\/+$/, "")}${path}`;
+	return `${trimSlashes(target.baseUrl)}${path}`;
+}
+
+/**
+ * The target for a request to `baseUrl` (default: the configured server).
+ * The key is only ever sent to the server it was configured for, so a model
+ * that points somewhere else goes without it.
+ */
+export function targetFor(configured: OllamaTarget, baseUrl?: string): OllamaTarget {
+	if (!baseUrl || trimSlashes(baseUrl) === trimSlashes(configured.baseUrl)) return configured;
+	return { baseUrl };
+}
+
+/** JSON content type, the target's key if it has one, then caller layers (later wins). */
+function headersFor(
+	target: OllamaTarget,
+	layers: Array<Record<string, string> | undefined> = [],
+): Headers {
+	const headers = new Headers({ "Content-Type": "application/json" });
+	if (target.apiKey) headers.set("Authorization", `Bearer ${target.apiKey}`);
+	for (const layer of layers) {
+		for (const [name, value] of Object.entries(layer ?? {})) headers.set(name, value);
+	}
+	return headers;
 }
 
 /**
@@ -32,16 +58,19 @@ async function requestJson<T>(
 	body?: object,
 ): Promise<T> {
 	const res = await fetch(url(target, path), {
+		headers: headersFor(target),
 		signal: AbortSignal.timeout(timeoutMs),
-		...(body && {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-		}),
+		...(body && { method: "POST", body: JSON.stringify(body) }),
 	});
 	if (!res.ok) {
 		const text = await res.text().catch(() => "");
-		throw new Error(describeOllamaError(text, { endpoint: path, status: res.status }));
+		throw new Error(
+			describeOllamaError(text, {
+				endpoint: path,
+				status: res.status,
+				apiKeySent: Boolean(target.apiKey),
+			}),
+		);
 	}
 	return (await res.json()) as T;
 }
@@ -104,13 +133,9 @@ export function openChat(
 	body: object,
 	{ signal, headers = [] }: ChatOptions = {},
 ): Promise<Response> {
-	const merged = new Headers({ "Content-Type": "application/json" });
-	for (const layer of headers) {
-		for (const [name, value] of Object.entries(layer ?? {})) merged.set(name, value);
-	}
 	return fetch(url(target, "/api/chat"), {
 		method: "POST",
-		headers: merged,
+		headers: headersFor(target, headers),
 		body: JSON.stringify(body),
 		signal,
 	});
