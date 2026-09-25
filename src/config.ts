@@ -36,6 +36,8 @@ export interface PersistedConfig {
 	keepAlive?: string | number;
 	/** The host OLLAMA_API_KEY was approved for (see ApiKeyApproval). */
 	apiKeyApproval?: ApiKeyApproval;
+	/** Saved answer to "start Ollama?" at startup. Absent = ask. */
+	autostart?: "always" | "never";
 }
 
 export function loadPersistedConfig(): PersistedConfig {

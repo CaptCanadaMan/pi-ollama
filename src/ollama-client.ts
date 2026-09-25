@@ -107,6 +107,15 @@ export async function runningModels(
 	return models;
 }
 
+/** The server's version, from /api/version - the cheapest "is it up?" check. */
+export async function serverVersion(
+	target: OllamaTarget,
+	options: RequestOptions = {},
+): Promise<string> {
+	const { version } = await requestJson<{ version: string }>(target, "/api/version", options);
+	return version;
+}
+
 /** A model's details and capabilities, from /api/show. */
 export function showModel(
 	target: OllamaTarget,

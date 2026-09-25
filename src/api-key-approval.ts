@@ -9,30 +9,14 @@
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import type { DiscoveredModel } from "./discovery.js";
 import { errorText } from "./errors.js";
+import type { SessionStartPi } from "./session-start.js";
 import { keyFingerprint, type OllamaExtensionSettings } from "./settings.js";
 
 const APPROVE = "Yes, send it to this server";
 const DECLINE = "No, not this session";
 
-interface SessionContext {
-	hasUI?: boolean;
-	ui: {
-		select(title: string, options: string[]): Promise<string | undefined>;
-		notify(message: string, type?: "info" | "warning" | "error"): void;
-	};
-}
-
-// Optional, like status.ts: an older pi without events just never asks, and
-// the key stays unapproved (unsent) - the safe side.
-interface Pi {
-	on?: (
-		event: "session_start",
-		handler: (event: { reason: string }, ctx: SessionContext) => Promise<void>,
-	) => void;
-}
-
 export function registerApiKeyApproval(
-	pi: Pi,
+	pi: SessionStartPi,
 	settings: OllamaExtensionSettings,
 	refresh: () => Promise<DiscoveredModel[]>,
 	envKey: string | undefined,

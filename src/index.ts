@@ -22,6 +22,7 @@ import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
 import { discoverModels, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";
 import { streamOllama } from "./provider.js";
 import { registerApiKeyApproval } from "./api-key-approval.js";
+import { createOllamaLauncher, registerAutostart } from "./autostart.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
 import { registerThroughputStatus, type StatusPi } from "./status.js";
@@ -177,10 +178,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	};
 
 	// Discovery's per-request timeouts bound this wait. If Ollama can't be
-	// reached, fall back to the cached list so the provider still registers.
+	// reached, fall back to the cached list so the provider still registers,
+	// and keep the reason: autostart offers to start a local server when
+	// nothing was listening.
+	let startupFailure: unknown;
 	try {
 		await refreshModels();
 	} catch (e) {
+		startupFailure = e;
 		models = loadCache();
 		registerProvider(models);
 		process.stderr.write(
@@ -193,6 +198,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	}
 
 	registerCommands(pi, settings, () => models, refreshModels, registerProvider);
+	registerAutostart(pi, settings, {
+		refresh: refreshModels,
+		startupFailure,
+		launcher: createOllamaLauncher(settings),
+	});
 	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
 }
 
