@@ -30,9 +30,11 @@ function stubOllama(loadGate: Promise<void> = Promise.resolve()) {
 	const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
 		const body = JSON.parse(String(init.body)) as OllamaRequest;
 		bodies.push(body);
-		if (body.messages.length > 0) return ndjsonResponse([textChunk("hi"), doneChunk(1, 1e6)]);
+		// Warm-ups are empty (weights) or non-streaming (prompt); real turns stream.
+		const isWarmUp = body.messages.length === 0 || body.stream === false;
+		if (!isWarmUp) return ndjsonResponse([textChunk("hi"), doneChunk(1, 1e6)]);
 		await loadGate;
-		return Response.json({ done: true, done_reason: "load" });
+		return Response.json({ done: true, done_reason: body.messages.length ? "length" : "load" });
 	});
 	vi.stubGlobal("fetch", fetchMock);
 	return { fetchMock, bodies };
@@ -181,7 +183,10 @@ describe("warming the model", () => {
 
 		sessionStart(gemma);
 		await vi.waitFor(() =>
-			expect(setStatus).toHaveBeenLastCalledWith("ollama-warm", "loading gemma4:26b…"),
+			expect(setStatus).toHaveBeenLastCalledWith(
+				"ollama-warm",
+				expect.stringMatching(/warming gemma4:26b · loading the model · \d+s$/),
+			),
 		);
 		finishLoad();
 
@@ -240,6 +245,164 @@ describe("warming the model - display is best-effort", () => {
 		process.off("unhandledRejection", unhandled);
 
 		expect(unhandled).not.toHaveBeenCalled();
+	});
+});
+
+describe("warming the prompt, not just the weights", () => {
+	const SYSTEM = "You are pi, a coding agent.\n\n<rules>Be brief.</rules>";
+	const read = { name: "read", description: "Read a file", parameters: { type: "object" } };
+	const bash = { name: "bash", description: "Run a command", parameters: { type: "object" } };
+	const thinker = { ...gemma, reasoning: true };
+
+	/** Warm-up wired to a pi that can report its system prompt, tools and thinking level. */
+	function promptSetup(thinkingLevel = "off", activeTools = ["read", "bash"]) {
+		const handlers = new Map<string, Handler>();
+		const pi = {
+			on: (event: string, handler: Handler) => handlers.set(event, handler),
+			getAllTools: () => [bash, read],
+			getActiveTools: () => activeTools,
+		};
+		registerWarmup(pi, settings, { whenReady: async () => {} });
+		const setStatus = vi.fn();
+		const ctx = (model: object) => ({
+			model,
+			thinkingLevel,
+			getSystemPrompt: () => SYSTEM,
+			ui: { setStatus },
+		});
+		return {
+			setStatus,
+			sessionStart: (model: object) =>
+				handlers.get("session_start")?.({ reason: "startup" }, ctx(model)),
+			selectThinkingLevel: (model: object, level: string) =>
+				handlers.get("thinking_level_select")?.({ level, previousLevel: thinkingLevel }, ctx(model)),
+		};
+	}
+
+	it("sends the same system prompt, tools, think and num_ctx as the first real turn", async () => {
+		const { bodies } = stubOllama();
+		promptSetup("high").sessionStart(thinker);
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
+
+		await runStream(
+			{
+				messages: [
+					{ role: "system", content: SYSTEM, toolsAdded: [read, bash], timestamp: 0 },
+					{ role: "user", content: "hi", timestamp: 1 },
+				],
+			},
+			undefined,
+			{ model: thinker, options: { reasoning: "high" } },
+		);
+
+		const [warm, turn] = bodies;
+		expect(warm!.messages).toEqual([turn!.messages[0]]);
+		expect(warm!.tools).toEqual(turn!.tools);
+		expect(warm!.think).toEqual(turn!.think);
+		expect(warm!.options?.num_ctx).toBe(turn!.options?.num_ctx);
+	});
+
+	it("re-warms when the thinking level changes, with the new think value", async () => {
+		const { bodies } = stubOllama();
+		const { sessionStart, selectThinkingLevel } = promptSetup("off");
+
+		sessionStart(thinker);
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
+		selectThinkingLevel(thinker, "high");
+		await vi.waitFor(() => expect(bodies).toHaveLength(2));
+
+		expect(bodies[0]!.think).toBe(false);
+		expect(bodies[1]!.think).toBe(true);
+	});
+
+	it("a level change during a warm-up still gets its own warm-up", async () => {
+		let finishFirst!: () => void;
+		const { bodies } = stubOllama(
+			new Promise<void>((resolve) => {
+				finishFirst = resolve;
+			}),
+		);
+		const { sessionStart, selectThinkingLevel } = promptSetup("off");
+
+		sessionStart(thinker);
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
+		selectThinkingLevel(thinker, "high");
+
+		await vi.waitFor(() => expect(bodies).toHaveLength(2));
+		finishFirst();
+		expect(bodies[1]!.think).toBe(true);
+	});
+
+	it("keeps the footer visibly alive while it reads the prompt: spinner and seconds", async () => {
+		vi.useFakeTimers();
+		try {
+			let finish!: () => void;
+			stubOllama(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				}),
+			);
+			const { sessionStart, setStatus } = promptSetup();
+
+			sessionStart(gemma);
+			await vi.advanceTimersByTimeAsync(0);
+			const first = String(setStatus.mock.lastCall?.[1]);
+			await vi.advanceTimersByTimeAsync(3_100);
+			const later = String(setStatus.mock.lastCall?.[1]);
+
+			expect(first).toMatch(/warming gemma4:26b · reading pi's prompt · 0s$/);
+			expect(later).toMatch(/warming gemma4:26b · reading pi's prompt · 3s$/);
+			expect(later.charAt(0)).not.toBe(first.charAt(0)); // the spinner moved
+			finish();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("stops ticking once the warm-up ends", async () => {
+		vi.useFakeTimers();
+		try {
+			let finish!: () => void;
+			stubOllama(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				}),
+			);
+			const { sessionStart, setStatus } = promptSetup();
+
+			sessionStart(gemma);
+			await vi.advanceTimersByTimeAsync(1_000);
+			finish();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(setStatus).toHaveBeenLastCalledWith("ollama-warm", undefined);
+			const callsAtEnd = setStatus.mock.calls.length;
+			await vi.advanceTimersByTimeAsync(5_000);
+
+			expect(setStatus.mock.calls.length).toBe(callsAtEnd);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("asks for a single token, without streaming", async () => {
+		const { bodies } = stubOllama();
+		promptSetup().sessionStart(gemma);
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
+
+		expect(bodies[0]!.stream).toBe(false);
+		expect(bodies[0]!.options?.num_predict).toBe(1);
+	});
+
+	it.each([
+		[["read"], ["read"]],
+		[["bash", "read"], ["bash", "read"]],
+		[["read", "bash"], ["read", "bash"]],
+	])("declares only the active tools, in pi's order (%j)", async (active, expected) => {
+		const { bodies } = stubOllama();
+		promptSetup("off", active).sessionStart(gemma);
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
+
+		expect(bodies[0]!.tools?.map((t) => t.function.name)).toEqual(expected);
 	});
 });
 

@@ -32,7 +32,7 @@ import { resolveThink, type ThinkingLevelMap } from "./thinking.js";
 // installed version of @earendil-works/pi-ai.
 // ============================================================================
 
-interface PiModel {
+export interface PiModel {
 	id: string;
 	api: string;
 	provider?: string;
@@ -239,6 +239,35 @@ export function requestOptions(
 	return options;
 }
 
+/**
+ * The /api/chat request for a turn: pi's context converted, the model's
+ * options, keep_alive and think. The one place this happens - the prompt
+ * warm-up (warm.ts) builds its request here too, so Ollama sees the exact
+ * prefix the first real turn will send.
+ */
+export function buildTurnRequest(
+	model: PiModel,
+	context: PiContext,
+	options: Pick<PiSimpleStreamOptions, "temperature" | "maxTokens" | "reasoning"> | undefined,
+	settings: OllamaExtensionSettings,
+): OllamaRequest {
+	const supportsVision = model.input?.includes("image") ?? false;
+	const { messages, tools } = convertContext(context, supportsVision);
+	// model.contextWindow already incorporates the context-length override and
+	// the capped default (index.ts toProviderModel), so this wire value and pi's
+	// UI counter agree.
+	return buildChatRequestBody({
+		modelId: model.id,
+		messages,
+		options: requestOptions(model, settings, options),
+		keepAlive: settings.keepAlive,
+		reasoningCapable: Boolean(model.reasoning),
+		reasoningLevel: options?.reasoning,
+		thinkingLevelMap: model.thinkingLevelMap,
+		tools,
+	});
+}
+
 export function streamOllama(
 	model: PiModel,
 	context: PiContext,
@@ -283,26 +312,8 @@ export function streamOllama(
 		try {
 			const target = targetFor(settings, model.baseUrl);
 
-			const supportsVision = model.input?.includes("image") ?? false;
-			const { messages, tools } = convertContext(context, supportsVision);
-
-			// model.contextWindow already incorporates settings.contextLength
-			// override and the capped default — applied once in index.ts's
-			// toProviderModel so both this wire path and pi's UI counter read
-			// the same effective value. See toProviderModel for resolution.
-			const turnOptions = requestOptions(model, settings, options);
-			const numCtx = turnOptions.num_ctx;
-
-			let body: OllamaRequest = buildChatRequestBody({
-				modelId: model.id,
-				messages,
-				options: turnOptions,
-				keepAlive: settings.keepAlive,
-				reasoningCapable: Boolean(model.reasoning),
-				reasoningLevel: options?.reasoning,
-				thinkingLevelMap: model.thinkingLevelMap,
-				tools,
-			});
+			let body = buildTurnRequest(model, context, options, settings);
+			const numCtx = body.options?.num_ctx;
 
 			// Allow callers to inspect or replace the request body.
 			if (options?.onPayload) {

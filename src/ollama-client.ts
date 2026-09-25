@@ -117,13 +117,16 @@ export async function serverVersion(
 }
 
 /**
- * Load a model into memory: an /api/chat with no messages, answered with
- * done_reason "load" once it's in. Slow by nature, so the timeout is long.
+ * Load a model, and optionally a prompt, into memory: an /api/chat that is
+ * either empty (answered with done_reason "load") or a non-streaming prefix
+ * that asks for one token. Slow by nature, so the timeout is long.
  */
 export async function loadModel(
 	target: OllamaTarget,
-	body: { messages: [] } & object,
-	options: RequestOptions = { timeoutMs: 120_000 },
+	body: object,
+	// Reading pi's ~7,800-token prompt takes 17 s on an M1 Max and longer on
+	// smaller hardware; timing out would throw that work away.
+	options: RequestOptions = { timeoutMs: 600_000 },
 ): Promise<void> {
 	await requestJson<unknown>(target, "/api/chat", options, body);
 }
