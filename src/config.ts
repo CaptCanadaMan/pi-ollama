@@ -38,6 +38,8 @@ export interface PersistedConfig {
 	apiKeyApproval?: ApiKeyApproval;
 	/** Saved answer to "start Ollama?" at startup. Absent = ask. */
 	autostart?: "always" | "never";
+	/** Warm-up on/off set via /ollama-warm-up. Absent = OLLAMA_NATIVE_WARM, else on. */
+	warm?: boolean;
 }
 
 export function loadPersistedConfig(): PersistedConfig {

@@ -45,3 +45,21 @@ describe("loadSettings - the API key at startup", () => {
 		expect(settings.apiKeyStatus).toBe("unapproved");
 	});
 });
+
+describe("loadSettings - the warm-up switch", () => {
+	it("warms by default and switches off with OLLAMA_NATIVE_WARM=0", () => {
+		expect(loadSettings().warm).toBe(true);
+		vi.stubEnv("OLLAMA_NATIVE_WARM", "0");
+		expect(loadSettings().warm).toBe(false);
+	});
+
+	it("a choice saved by /ollama-warm-up wins over OLLAMA_NATIVE_WARM", () => {
+		vi.stubEnv("OLLAMA_NATIVE_WARM", "0");
+		persisted.warm = true;
+		expect(loadSettings().warm).toBe(true);
+
+		vi.unstubAllEnvs();
+		persisted.warm = false;
+		expect(loadSettings().warm).toBe(false);
+	});
+});

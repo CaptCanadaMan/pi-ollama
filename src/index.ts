@@ -28,6 +28,7 @@ import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
 import { registerThroughputStatus, type StatusPi } from "./status.js";
 import { GenerationTelemetry } from "./telemetry.js";
 import { toThinkingLevelMap, type ThinkingLevelMap } from "./thinking.js";
+import { createReadySignal, registerWarmup } from "./warm.js";
 
 // ============================================================================
 // Minimal structural interfaces for the pi extension API.
@@ -74,7 +75,8 @@ interface ExtensionAPI extends StatusPi {
 		name: string,
 		config: {
 			description: string;
-			handler: (args: string) => void | Promise<void>;
+			// pi also passes the command context; each module declares its own slice.
+			handler: (args: string, ctx: never) => void | Promise<void>;
 		},
 	): void;
 }
@@ -169,11 +171,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	// The one refresh path, shared by startup and /ollama-refresh: discover
 	// live, keep the list for the next startup, register it.
 	let models: DiscoveredModel[] = [];
+	const ready = createReadySignal();
 	const refreshModels = async (): Promise<DiscoveredModel[]> => {
 		const fresh = await discoverModels(settings);
 		saveCache(fresh);
 		models = fresh;
 		registerProvider(fresh);
+		ready.markReady();
 		return fresh;
 	};
 
@@ -204,6 +208,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		launcher: createOllamaLauncher(settings),
 	});
 	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
+	registerWarmup(pi, settings, { whenReady: ready.whenReady });
 }
 
 // ============================================================================

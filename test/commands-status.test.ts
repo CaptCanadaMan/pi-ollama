@@ -104,6 +104,16 @@ describe("/ollama-status", () => {
 		);
 	});
 
+	it("says whether model warm-up is on", async () => {
+		stubServer(async () => Response.json({ models: [] }));
+
+		const on = await command("ollama-status", [], {}, { warm: true })();
+		const off = await command("ollama-status", [], {}, { warm: false })();
+
+		expect(on.text).toContain("Warm-up: on (/ollama-warm-up to change)");
+		expect(off.text).toContain("Warm-up: off (/ollama-warm-up to change)");
+	});
+
 	it("reports an error when there's no Ollama to talk to", async () => {
 		stubServer(async () => {
 			throw new TypeError("fetch failed");

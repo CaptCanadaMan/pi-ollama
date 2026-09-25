@@ -116,6 +116,18 @@ export async function serverVersion(
 	return version;
 }
 
+/**
+ * Load a model into memory: an /api/chat with no messages, answered with
+ * done_reason "load" once it's in. Slow by nature, so the timeout is long.
+ */
+export async function loadModel(
+	target: OllamaTarget,
+	body: { messages: [] } & object,
+	options: RequestOptions = { timeoutMs: 120_000 },
+): Promise<void> {
+	await requestJson<unknown>(target, "/api/chat", options, body);
+}
+
 /** A model's details and capabilities, from /api/show. */
 export function showModel(
 	target: OllamaTarget,

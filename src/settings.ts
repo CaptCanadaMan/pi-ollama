@@ -15,6 +15,9 @@
 // OLLAMA_NATIVE_THROUGHPUT    — tok/s telemetry (footer status, session records,
 //                                /ollama-stats). On by default; set to 0 / false /
 //                                off / no to switch the whole feature off.
+// OLLAMA_NATIVE_WARM          — load the model at session start / model switch
+//                                (warm.ts). On by default; same off values.
+//                                Superseded by /ollama-warm-up's saved choice.
 
 import { createHash } from "node:crypto";
 import { type ApiKeyApproval, loadPersistedConfig } from "./config.js";
@@ -49,6 +52,8 @@ export interface OllamaExtensionSettings {
 	contextLength?: number;
 	/** tok/s telemetry (status + session records). Default: true. */
 	throughput: boolean;
+	/** Load the model at session start / model switch (OLLAMA_NATIVE_WARM). Default: true. */
+	warm: boolean;
 	/**
 	 * The API key sent as a bearer token to the configured Ollama. Present
 	 * only once the key in OLLAMA_API_KEY is approved for this host.
@@ -59,7 +64,7 @@ export interface OllamaExtensionSettings {
 }
 
 /** On unless explicitly switched off - an unrecognized value leaves it on. */
-export function resolveThroughputEnabled(envRaw: string | undefined): boolean {
+export function resolveEnabledFlag(envRaw: string | undefined): boolean {
 	const v = (envRaw ?? "").trim().toLowerCase();
 	return !["0", "false", "off", "no"].includes(v);
 }
@@ -161,7 +166,8 @@ export function loadSettings(): OllamaExtensionSettings {
 		numCtx: 32768,
 		ghostRetries,
 		contextLength,
-		throughput: resolveThroughputEnabled(process.env.OLLAMA_NATIVE_THROUGHPUT),
+		throughput: resolveEnabledFlag(process.env.OLLAMA_NATIVE_THROUGHPUT),
+		warm: persisted.warm ?? resolveEnabledFlag(process.env.OLLAMA_NATIVE_WARM),
 		...resolveApiKey(process.env.OLLAMA_API_KEY, baseUrl, persisted.apiKeyApproval),
 	};
 }

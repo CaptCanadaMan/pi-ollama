@@ -11,6 +11,7 @@ export const settings = {
 	ghostRetries: 2,
 	contextLength: undefined,
 	throughput: true,
+	warm: true,
 };
 
 export const model = { id: "gemma4:12b", api: "ollama-native", provider: "ollama" };

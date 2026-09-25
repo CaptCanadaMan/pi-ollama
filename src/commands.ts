@@ -89,6 +89,7 @@ export function registerCommands(
 					? `keep_alive: ${settings.keepAlive} (override — sent on every request)`
 					: "keep_alive: defer to server (default)",
 			);
+			lines.push(`Warm-up: ${settings.warm ? "on" : "off"} (/ollama-warm-up to change)`);
 			const keyLine = API_KEY_STATUS_LINES[settings.apiKeyStatus];
 			if (keyLine) lines.push(keyLine);
 

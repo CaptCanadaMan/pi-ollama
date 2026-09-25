@@ -221,6 +221,24 @@ export function buildChatRequestBody(inputs: ChatBodyInputs): OllamaRequest {
 	return body;
 }
 
+/**
+ * The model options every request for this model carries. num_ctx decides how
+ * Ollama loads the model, so the chat turn and the warm-up (warm.ts) both use
+ * this: a warm-up with any other num_ctx would just make the first turn reload.
+ */
+export function requestOptions(
+	model: { contextWindow?: number },
+	settings: { numCtx: number },
+	turn?: { temperature?: number; maxTokens?: number },
+): NonNullable<OllamaRequest["options"]> {
+	const options: NonNullable<OllamaRequest["options"]> = {
+		num_ctx: model.contextWindow ?? settings.numCtx ?? DEFAULT_NUM_CTX,
+	};
+	if (turn?.temperature !== undefined) options.temperature = turn.temperature;
+	if (turn?.maxTokens !== undefined) options.num_predict = turn.maxTokens;
+	return options;
+}
+
 export function streamOllama(
 	model: PiModel,
 	context: PiContext,
@@ -272,20 +290,13 @@ export function streamOllama(
 			// override and the capped default — applied once in index.ts's
 			// toProviderModel so both this wire path and pi's UI counter read
 			// the same effective value. See toProviderModel for resolution.
-			const numCtx = model.contextWindow ?? settings.numCtx ?? DEFAULT_NUM_CTX;
-
-			const requestOptions: OllamaRequest["options"] = { num_ctx: numCtx };
-			if (options?.temperature !== undefined) {
-				requestOptions.temperature = options.temperature;
-			}
-			if (options?.maxTokens !== undefined) {
-				requestOptions.num_predict = options.maxTokens;
-			}
+			const turnOptions = requestOptions(model, settings, options);
+			const numCtx = turnOptions.num_ctx;
 
 			let body: OllamaRequest = buildChatRequestBody({
 				modelId: model.id,
 				messages,
-				options: requestOptions,
+				options: turnOptions,
 				keepAlive: settings.keepAlive,
 				reasoningCapable: Boolean(model.reasoning),
 				reasoningLevel: options?.reasoning,

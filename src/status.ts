@@ -20,7 +20,7 @@ export const STATUS_KEY = "ollama-throughput";
 const LIVE_UPDATE_INTERVAL_MS = 400;
 
 // Minimal structural types for the slice of pi's extension API used here.
-interface StatusContext {
+export interface StatusContext {
 	hasUI?: boolean;
 	ui?: { setStatus?: (key: string, text: string | undefined) => void };
 }
@@ -42,13 +42,18 @@ function isOllamaAssistantMessage(event: MessageEvent): boolean {
 	return m?.role === "assistant" && m.api === "ollama-native";
 }
 
-function setStatus(ctx: StatusContext, text: string | undefined): void {
+/** Set (or clear, with undefined) one footer status. Best-effort: a missing or throwing UI is ignored. */
+export function setFooterStatus(ctx: StatusContext, key: string, text: string | undefined): void {
 	try {
 		if (ctx.hasUI === false) return;
-		ctx.ui?.setStatus?.(STATUS_KEY, text);
+		ctx.ui?.setStatus?.(key, text);
 	} catch {
 		// Display is best-effort.
 	}
+}
+
+function setStatus(ctx: StatusContext, text: string | undefined): void {
+	setFooterStatus(ctx, STATUS_KEY, text);
 }
 
 export function registerThroughputStatus(
