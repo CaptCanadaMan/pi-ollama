@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOllamaLauncher, findOllamaBinary } from "../src/autostart.js";
+import { createOllamaLauncher, findOllamaBinary, type LauncherSystem } from "../src/autostart.js";
 
 const target = { baseUrl: "http://localhost:11434" };
 const refused = () => Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
@@ -56,5 +56,81 @@ describe("findOllamaBinary", () => {
 
 	it("finds nothing when ollama isn't installed", () => {
 		expect(findOllamaBinary("/usr/bin:/bin", () => false)).toBeUndefined();
+	});
+});
+
+/** A fake machine: which paths exist, where symlinks point, and what got run. */
+function fakeSystem(overrides: Partial<LauncherSystem> = {}) {
+	const runs: Array<{ command: string; args: string[] }> = [];
+	const system: LauncherSystem = {
+		platform: "darwin",
+		pathEnv: "/usr/local/bin:/usr/bin",
+		isExecutable: (p) => p === "/usr/local/bin/ollama",
+		realpath: (p) =>
+			p === "/usr/local/bin/ollama" ? "/Applications/Ollama.app/Contents/Resources/ollama" : p,
+		exists: () => false,
+		run: (command, args) => {
+			runs.push({ command, args });
+			return { pid: 4242 };
+		},
+		...overrides,
+	};
+	return { system, runs };
+}
+
+describe("starting Ollama on macOS", () => {
+	it("opens the Ollama app hidden, menu-bar only, the way Ollama's own CLI does", () => {
+		const { system, runs } = fakeSystem();
+		const launcher = createOllamaLauncher(target, { system });
+
+		const app = launcher.locate();
+		const { stopHint } = launcher.launch(app!);
+
+		expect(app).toBe("/Applications/Ollama.app");
+		expect(runs).toEqual([
+			{
+				command: "/usr/bin/open",
+				args: ["-j", "-a", "/Applications/Ollama.app", "--args", "--fast-startup"],
+			},
+		]);
+		expect(stopHint).toMatch(/menu bar/i);
+	});
+
+	it("falls back to /Applications/Ollama.app when the CLI isn't the app's", () => {
+		const { system } = fakeSystem({
+			realpath: (p) => p, // e.g. a Homebrew ollama, not a link into the app
+			exists: (p) => p === "/Applications/Ollama.app",
+		});
+
+		expect(createOllamaLauncher(target, { system }).locate()).toBe("/Applications/Ollama.app");
+	});
+
+	it("has nothing to offer when the Ollama app isn't installed", () => {
+		const { system } = fakeSystem({ realpath: (p) => p, exists: () => false });
+
+		expect(createOllamaLauncher(target, { system }).locate()).toBeUndefined();
+	});
+});
+
+describe("starting Ollama on Linux", () => {
+	it("runs a background ollama serve and says how to stop it by PID", () => {
+		const { system, runs } = fakeSystem({ platform: "linux", realpath: (p) => p });
+		const launcher = createOllamaLauncher(target, { system });
+
+		const cli = launcher.locate();
+		const { stopHint } = launcher.launch(cli!);
+
+		expect(cli).toBe("/usr/local/bin/ollama");
+		expect(runs).toEqual([{ command: "/usr/local/bin/ollama", args: ["serve"] }]);
+		expect(stopHint).toBe("Stop it with: kill 4242");
+		expect(launcher.manualHint).toContain("sudo systemctl start ollama");
+	});
+});
+
+describe("starting Ollama elsewhere", () => {
+	it("has nothing to offer on other platforms", () => {
+		const { system } = fakeSystem({ platform: "win32" });
+
+		expect(createOllamaLauncher(target, { system }).locate()).toBeUndefined();
 	});
 });

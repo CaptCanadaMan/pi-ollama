@@ -1,11 +1,21 @@
-// Offering to start a local `ollama serve` when Ollama isn't running.
+// Offering to start Ollama when it isn't running.
 //
 // Startup discovery records why it failed. If the configured Ollama is on this
 // machine and refused the connection (nothing listening), pi offers once, at
-// startup, to launch a headless server. It runs detached and outlives pi.
+// startup, to start it: on macOS the Ollama app, hidden, so only its menu-bar
+// icon appears (quit it there); on Linux a background `ollama serve`, with its
+// PID so the user can stop it. The prompt also names the manual routes.
 
 import { spawn } from "node:child_process";
-import { accessSync, closeSync, constants, mkdirSync, openSync } from "node:fs";
+import {
+	accessSync,
+	closeSync,
+	constants,
+	existsSync,
+	mkdirSync,
+	openSync,
+	realpathSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
@@ -51,12 +61,18 @@ function remember(choice: "always" | "never"): void {
 
 /** Starting and watching the server - the process boundary, passed in so tests can fake it. */
 export interface OllamaLauncher {
-	findBinary(): string | undefined;
-	launch(binary: string): void;
+	/** What would be started (the ollama CLI, or Ollama.app), or undefined when nothing can be. */
+	locate(): string | undefined;
+	/** Start it; returns how the user stops it again. */
+	launch(what: string): { stopHint: string };
 	/** Resolves true once the server answers, false if it never does. */
 	waitUntilUp(): Promise<boolean>;
 	/** Where the launched server's output goes, for the "didn't come up" message. */
 	logPath: string;
+	/** The ways to start Ollama by hand instead, shown in the prompt. */
+	manualHint: string;
+	/** What starting it means on this platform, asked in the prompt. */
+	description: string;
 }
 
 export interface AutostartDeps {
@@ -77,8 +93,8 @@ export function registerAutostart(
 			isConnectionRefused(startupFailure) &&
 			isLoopbackUrl(settings.baseUrl);
 		if (!offerable) return;
-		const binary = launcher.findBinary();
-		if (!binary) return;
+		const startable = launcher.locate();
+		if (!startable) return;
 
 		const preference = loadPersistedConfig().autostart;
 		if (preference === "never") {
@@ -92,8 +108,7 @@ export function registerAutostart(
 		if (preference !== "always") {
 			if (!ctx.hasUI) return;
 			const answer = await ctx.ui.select(
-				`Ollama isn't running at ${settings.baseUrl}. Start a background ollama serve? ` +
-					"It keeps running after pi exits.",
+				`Ollama isn't running at ${settings.baseUrl}. ${launcher.description} ${launcher.manualHint}`,
 				[
 					START_NOW,
 					ALWAYS,
@@ -106,10 +121,11 @@ export function registerAutostart(
 			if (answer !== START_NOW && answer !== ALWAYS) return;
 		}
 
-		launcher.launch(binary);
+		const { stopHint } = launcher.launch(startable);
+		settings.startedOllamaStopHint = stopHint;
 		if (!(await launcher.waitUntilUp())) {
 			ctx.ui.notify(
-				`Started ollama serve, but it didn't answer at ${settings.baseUrl}. ` +
+				`Started Ollama, but it didn't answer at ${settings.baseUrl}. ` +
 					`Its output is in ${launcher.logPath}.`,
 				"error",
 			);
@@ -117,9 +133,9 @@ export function registerAutostart(
 		}
 		try {
 			const models = await refresh();
-			ctx.ui.notify(`Started ollama serve - ${models.length} model(s) registered`, "info");
+			ctx.ui.notify(`Started Ollama - ${models.length} model(s) registered. ${stopHint}`, "info");
 		} catch (e) {
-			ctx.ui.notify(`Started ollama serve, but discovering models failed: ${errorText(e)}`, "error");
+			ctx.ui.notify(`Started Ollama, but discovering models failed: ${errorText(e)}`, "error");
 		}
 	});
 }
@@ -136,53 +152,112 @@ export function findOllamaBinary(
 	return dirs.map((dir) => `${dir}/ollama`).find(isExecutable);
 }
 
-function isExecutable(path: string): boolean {
-	try {
-		accessSync(path, constants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
+/** Everything a launcher needs from the machine - injected so tests never start real processes. */
+export interface LauncherSystem {
+	platform: string;
+	pathEnv: string | undefined;
+	isExecutable(path: string): boolean;
+	realpath(path: string): string;
+	exists(path: string): boolean;
+	/** Start a command detached from pi, output to logPath if given; returns its PID. */
+	run(command: string, args: string[], options?: { logPath?: string }): { pid?: number };
 }
+
+const realSystem: LauncherSystem = {
+	platform: process.platform,
+	pathEnv: process.env.PATH,
+	isExecutable(path) {
+		try {
+			accessSync(path, constants.X_OK);
+			return true;
+		} catch {
+			return false;
+		}
+	},
+	realpath: (path) => realpathSync(path),
+	exists: (path) => existsSync(path),
+	run(command, args, { logPath } = {}) {
+		let out: number | "ignore" = "ignore";
+		if (logPath) {
+			mkdirSync(dirname(logPath), { recursive: true });
+			out = openSync(logPath, "a");
+		}
+		const child = spawn(command, args, { detached: true, stdio: ["ignore", out, out] });
+		// A spawn failure arrives as an event; unhandled, it would crash pi.
+		child.on("error", (e) => dbg("autostart-spawn-error", { error: String(e) }));
+		child.unref();
+		if (typeof out === "number") closeSync(out);
+		return { pid: child.pid };
+	},
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export interface LauncherTiming {
+export interface LauncherOptions {
 	/** How often to check whether the server answers. Default: 250 ms. */
 	pollMs?: number;
 	/** How long to wait for it overall. Default: 20 s. */
 	timeoutMs?: number;
+	system?: LauncherSystem;
 }
 
-/** The real launcher: a detached, headless `ollama serve` that outlives pi. */
+// Ollama.app bundles the CLI; this finds the bundle from the binary's real path.
+const APP_BUNDLE = /^(.*\/Ollama\s?\d*\.app)\//;
+const DEFAULT_APP = "/Applications/Ollama.app";
+
+/**
+ * The real launcher for this platform. macOS: open Ollama.app hidden, so only
+ * its menu-bar icon appears - exactly what Ollama's own CLI does. Linux: a
+ * background `ollama serve`, with its PID so the user can stop it. Anything
+ * else: nothing to launch, so no offer.
+ */
 export function createOllamaLauncher(
 	target: OllamaTarget,
-	{ pollMs = 250, timeoutMs = 20_000 }: LauncherTiming = {},
+	{ pollMs = 250, timeoutMs = 20_000, system = realSystem }: LauncherOptions = {},
 ): OllamaLauncher {
+	const waitUntilUp = async () => {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			try {
+				await serverVersion(target, { timeoutMs: pollMs * 4 });
+				return true;
+			} catch {
+				await sleep(pollMs);
+			}
+		}
+		return false;
+	};
+	const binary = () => findOllamaBinary(system.pathEnv, system.isExecutable);
+
+	if (system.platform === "darwin") {
+		return {
+			description: "Start Ollama in the menu bar (no window)?",
+			manualHint: "Or open the Ollama app yourself.",
+			logPath: join(homedir(), ".ollama", "logs", "server.log"),
+			waitUntilUp,
+			locate() {
+				const cli = binary();
+				const app = cli ? APP_BUNDLE.exec(system.realpath(cli))?.[1] : undefined;
+				return app ?? (system.exists(DEFAULT_APP) ? DEFAULT_APP : undefined);
+			},
+			launch(app) {
+				system.run("/usr/bin/open", ["-j", "-a", app, "--args", "--fast-startup"]);
+				return { stopHint: "Quit it from the Ollama icon in the menu bar when you're done." };
+			},
+		};
+	}
+
 	const logPath = join(homedir(), ".pi", "agent", "cache", "pi-ollama-serve.log");
 	return {
+		description: "Start a background ollama serve? It keeps running after pi exits.",
+		manualHint:
+			"Or start it yourself: `ollama serve` in another terminal, or `sudo systemctl start ollama`.",
 		logPath,
-		findBinary: () => findOllamaBinary(process.env.PATH, isExecutable),
-		launch(binary) {
-			mkdirSync(dirname(logPath), { recursive: true });
-			const out = openSync(logPath, "a");
-			const child = spawn(binary, ["serve"], { detached: true, stdio: ["ignore", out, out] });
-			// A spawn failure arrives as an event; unhandled, it would crash pi.
-			child.on("error", (e) => dbg("autostart-spawn-error", { error: String(e) }));
-			child.unref();
-			closeSync(out);
-		},
-		async waitUntilUp() {
-			const deadline = Date.now() + timeoutMs;
-			while (Date.now() < deadline) {
-				try {
-					await serverVersion(target, { timeoutMs: pollMs * 4 });
-					return true;
-				} catch {
-					await sleep(pollMs);
-				}
-			}
-			return false;
+		waitUntilUp,
+		locate: () => (system.platform === "linux" ? binary() : undefined),
+		launch(cli) {
+			const { pid } = system.run(cli, ["serve"], { logPath });
+			return { stopHint: `Stop it with: kill ${pid}` };
 		},
 	};
 }

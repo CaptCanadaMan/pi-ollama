@@ -13,6 +13,7 @@ vi.mock("../src/config.js", () => ({
 }));
 
 const { registerAutostart } = await import("../src/autostart.js");
+const { registerCommands } = await import("../src/commands.js");
 
 type SessionStart = (event: { reason: string }, ctx: unknown) => Promise<void>;
 
@@ -53,17 +54,35 @@ function setup(opts: Setup = {}) {
 	};
 	const refresh = vi.fn(async () => [model("gemma4:26b"), model("gemma4:e4b")]);
 	const launcher = {
-		findBinary: vi.fn((): string | undefined => binary),
-		launch: vi.fn(),
+		locate: vi.fn((): string | undefined => binary),
+		launch: vi.fn(() => ({ stopHint: "Stop it with: kill 4242" })),
 		waitUntilUp: vi.fn(async () => comesUp),
 		logPath: "/home/me/.pi/agent/cache/pi-ollama-serve.log",
+		manualHint: "Or start it yourself: ollama serve",
+		description: "Start a background ollama serve?",
 	};
 	registerAutostart(pi, settings, { refresh, startupFailure: failure, launcher });
 	const select = vi.fn(async () => answer);
 	const notify = vi.fn();
 	const start = (reason = "startup", hasUI = true) =>
 		onStart?.({ reason }, { hasUI, ui: { select, notify } });
-	return { refresh, launcher, select, notify, start };
+	/** Run /ollama-status against the same settings, with Ollama now answering. */
+	const status = async () => {
+		const commands = new Map<string, (args: string, ctx: unknown) => Promise<void>>();
+		registerCommands(
+			{ registerCommand: (n: string, c: { handler: never }) => commands.set(n, c.handler) },
+			settings,
+			() => [],
+			async () => [],
+			() => undefined,
+		);
+		vi.stubGlobal("fetch", vi.fn(async () => Response.json({ models: [] })));
+		const statusNotify = vi.fn();
+		await commands.get("ollama-status")?.("", { ui: { notify: statusNotify } });
+		vi.unstubAllGlobals();
+		return String(statusNotify.mock.calls[0]?.[0]);
+	};
+	return { refresh, launcher, select, notify, start, status };
 }
 
 afterEach(() => {
@@ -72,7 +91,7 @@ afterEach(() => {
 });
 
 describe("offering to start Ollama when it isn't running", () => {
-	it("on 'Start Ollama now', launches ollama serve, waits for it, and registers its models", async () => {
+	it("on 'Start Ollama now', starts it, waits for it, and registers its models", async () => {
 		const { refresh, launcher, select, notify, start } = setup({ answer: "Start Ollama now" });
 
 		await start();
@@ -82,6 +101,30 @@ describe("offering to start Ollama when it isn't running", () => {
 		expect(launcher.waitUntilUp).toHaveBeenCalledTimes(1);
 		expect(refresh).toHaveBeenCalledTimes(1);
 		expect(notify).toHaveBeenCalledWith(expect.stringContaining("2 model(s) registered"), "info");
+	});
+
+	it("tells the user how to stop what it started", async () => {
+		const { notify, start } = setup({ answer: "Start Ollama now" });
+
+		await start();
+
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("Stop it with: kill 4242"), "info");
+	});
+
+	it("/ollama-status keeps saying how to stop what pi started", async () => {
+		const { start, status } = setup({ answer: "Start Ollama now" });
+
+		await start();
+
+		expect(await status()).toContain("Started by pi at startup. Stop it with: kill 4242");
+	});
+
+	it("names the ways to start it yourself alongside the choices", async () => {
+		const { select, start } = setup({ answer: "Not now" });
+
+		await start();
+
+		expect(select.mock.calls[0]![0]).toContain("Or start it yourself: ollama serve");
 	});
 
 	it("on 'Always start it automatically', remembers that and launches", async () => {

@@ -61,6 +61,8 @@ export interface OllamaExtensionSettings {
 	apiKey?: string;
 	/** Whether OLLAMA_API_KEY is unset, approved for this host, or waiting on approval. */
 	apiKeyStatus: ApiKeyStatus;
+	/** Set when pi started Ollama this session (autostart.ts): how the user stops it. */
+	startedOllamaStopHint?: string;
 }
 
 /** On unless explicitly switched off - an unrecognized value leaves it on. */

@@ -92,6 +92,9 @@ export function registerCommands(
 			lines.push(`Warm-up: ${settings.warm ? "on" : "off"} (/ollama-warm-up to change)`);
 			const keyLine = API_KEY_STATUS_LINES[settings.apiKeyStatus];
 			if (keyLine) lines.push(keyLine);
+			if (settings.startedOllamaStopHint) {
+				lines.push(`Started by pi at startup. ${settings.startedOllamaStopHint}`);
+			}
 
 			// Listing models confirms Ollama is reachable and answering.
 			try {
