@@ -18,6 +18,7 @@
 
 import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
 import { convertContext, type PiContext } from "./convert.js";
+import { describeOllamaError } from "./errors.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 import type { TelemetrySink } from "./telemetry.js";
@@ -197,6 +198,11 @@ export function buildChatRequestBody(inputs: ChatBodyInputs): OllamaRequest {
 		messages: inputs.messages,
 		stream: true,
 		options: inputs.options,
+		// Never let Ollama silently drop the oldest messages to fit num_ctx:
+		// it would answer without them and report a shrunken prompt_eval_count,
+		// so pi would never compact. Refused instead, the overflow reaches pi as
+		// an error it recognizes (describeOllamaError) and pi compacts and retries.
+		truncate: false,
 	};
 	if (inputs.keepAlive !== undefined) {
 		body.keep_alive = inputs.keepAlive;
@@ -347,7 +353,11 @@ export function streamOllama(
 				if (!response.ok) {
 					const text = await response.text().catch(() => "");
 					throw new Error(
-						`Ollama /api/chat returned HTTP ${response.status}: ${text.slice(0, 500)}`,
+						describeOllamaError(text, {
+							endpoint: "/api/chat",
+							status: response.status,
+							numCtx,
+						}),
 					);
 				}
 				if (!response.body) {
@@ -505,7 +515,9 @@ export function streamOllama(
 					}
 
 					if (chunk.error) {
-						throw new Error(`Ollama returned error: ${chunk.error}`);
+						throw new Error(
+							describeOllamaError(chunk.error, { endpoint: "/api/chat", numCtx }),
+						);
 					}
 
 					if (!output.responseId && chunk.created_at) {

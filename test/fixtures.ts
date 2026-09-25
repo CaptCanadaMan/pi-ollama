@@ -42,6 +42,12 @@ export function doneChunk(evalCount: number, evalDurationNs: number) {
 	};
 }
 
+/** The terminal event; `error` carries the assistant message on failures. */
+export interface TerminalEvent {
+	type: string;
+	error?: { stopReason?: string; errorMessage?: string };
+}
+
 /** Run one streamOllama call to completion; resolve with the terminal event. */
 export function runStream(
 	context: Parameters<typeof streamOllama>[1],
@@ -50,12 +56,12 @@ export function runStream(
 		model?: Parameters<typeof streamOllama>[0];
 		options?: Parameters<typeof streamOllama>[2];
 	} = {},
-): Promise<{ type: string }> {
+): Promise<TerminalEvent> {
 	return new Promise((resolve) => {
-		let last: { type: string } = { type: "none" };
+		let last: TerminalEvent = { type: "none" };
 		class FakeStream {
 			push(event: unknown) {
-				last = event as { type: string };
+				last = event as TerminalEvent;
 			}
 			end() {
 				resolve(last);

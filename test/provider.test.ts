@@ -87,6 +87,10 @@ describe("buildChatRequestBody — the wire body /api/chat actually receives", (
 		expect(body.messages).toHaveLength(1);
 	});
 
+	it("always asks Ollama not to truncate history (overflow must reach pi)", () => {
+		expect(buildChatRequestBody(base).truncate).toBe(false);
+	});
+
 	it("sends think only for thinking-capable models (Ollama rejects it otherwise)", () => {
 		expect("think" in buildChatRequestBody(base)).toBe(false);
 		const thinking = buildChatRequestBody({

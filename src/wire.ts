@@ -59,4 +59,8 @@ export interface OllamaRequest {
 	};
 	keep_alive?: string | number;
 	format?: string | object;
+	// Defaults to true on the server: a chat longer than num_ctx silently loses
+	// its oldest messages. We always send false so Ollama refuses instead and
+	// pi can compact (see errors.ts).
+	truncate?: boolean;
 }
