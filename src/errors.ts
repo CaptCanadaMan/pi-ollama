@@ -21,7 +21,7 @@ const OVERFLOW_PATTERNS = [
 
 const MAX_DETAIL_CHARS = 500;
 
-export function isContextOverflowText(text: string): boolean {
+function isContextOverflowText(text: string): boolean {
 	return OVERFLOW_PATTERNS.some((p) => p.test(text));
 }
 
@@ -49,7 +49,7 @@ function errorField(text: string): string | undefined {
  * llama-server's own JSON error in a string inside its `error` field, so this
  * unwraps as many layers as it finds (bounded). Non-JSON passes through.
  */
-export function extractErrorText(raw: string): string {
+function extractErrorText(raw: string): string {
 	let text = raw.trim();
 	for (let depth = 0; depth < 3; depth++) {
 		const inner = errorField(text);
