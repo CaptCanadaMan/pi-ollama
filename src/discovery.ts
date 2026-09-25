@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { inferCapabilities, type OllamaShowResponse } from "./capabilities.js";
+import type { OllamaThinking } from "./thinking.js";
 
 export interface DiscoveredModel {
 	id: string;
@@ -15,6 +16,8 @@ export interface DiscoveredModel {
 	tools: boolean;
 	vision: boolean;
 	reasoning: boolean;
+	/** The model's `think` values (gh#13). Absent on older Ollama and in older caches. */
+	thinking?: OllamaThinking;
 	contextWindow: number;
 	maxTokens: number;
 }
@@ -89,6 +92,7 @@ export async function discoverModels(baseUrl: string): Promise<DiscoveredModel[]
 				tools: caps.tools,
 				vision: caps.vision,
 				reasoning: caps.reasoning,
+				...(caps.thinking && { thinking: caps.thinking }),
 				contextWindow: caps.contextWindow,
 				maxTokens: caps.maxTokens,
 			});

@@ -127,13 +127,25 @@ On extension load, the provider:
    - Tool support from `capabilities` array, falling back to family-name heuristics for older Ollama versions.
    - Vision support from `capabilities` or `details.families` containing `clip`.
    - Reasoning/thinking support from `capabilities` or model-name patterns (`r1`, `deepseek`, `gemma4`, etc.).
+   - The model's accepted thinking values from `thinking.values` (Ollama 0.34+), which drive the per-model thinking levels below.
 4. Caches the result for next startup.
 
 If Ollama is unreachable at startup, the cached list is used as a fallback. Run `/ollama-refresh` once it's available to re-discover.
 
 ## Thinking control
 
-For thinking-capable models, the provider forwards pi's thinking level to Ollama's `think` request field: any level set in pi sends `think: true`; thinking off sends an explicit `think: false`. The explicit false is load-bearing — Ollama defaults thinking-capable models (the gemma4 family included) to thinking **on** when the field is omitted, so before this mapping existed, turning thinking off in pi had no effect on the wire and every turn paid the hidden reasoning-token cost (measured ~8× the generated tokens on a short gemma4:12b answer). Models without thinking support never get the field.
+For thinking-capable models, the provider forwards pi's thinking level to Ollama's `think` request field. Thinking off sends an explicit `think: false`. The explicit false is load-bearing — Ollama defaults thinking-capable models (the gemma4 family included) to thinking **on** when the field is omitted, so before this mapping existed, turning thinking off in pi had no effect on the wire and every turn paid the hidden reasoning-token cost (measured ~8× the generated tokens on a short gemma4:12b answer). Models without thinking support never get the field.
+
+What pi offers above off depends on the model. Ollama 0.34 and later report the `think` values each model accepts in `/api/show`, and the extension hands that list to pi, so the thinking-level picker only shows levels the model actually has:
+
+- A model with named levels gets exactly those, and the name goes on the wire unchanged. A model reporting `[false, "low", "medium", "high", "max"]` offers off, low, medium, high and max, and pi's high sends `think: "high"`.
+- An on/off model (`[false, true]`, like the gemma4 family) offers off and medium, and medium sends `think: true`. Medium is used because it's pi's default level.
+- A model that doesn't report `false` can't switch thinking off, so off isn't offered.
+- If your saved level isn't one the model has, pi moves to the nearest one it does have when you switch models.
+
+pi's level names are a fixed set: off, minimal, low, medium, high, xhigh and max. A value outside that set can't be offered without inventing a label for it, so it's left out. That includes a bare `true` listed next to named levels, where the named levels already cover "on". `/ollama-info <model>` shows the levels a model gets and lists anything left out.
+
+On older Ollama servers that don't report thinking values, every level sends `think: true` as before. After upgrading Ollama, run `/ollama-refresh` so the cached model list picks the values up.
 
 ---
 

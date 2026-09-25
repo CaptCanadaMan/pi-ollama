@@ -46,6 +46,10 @@ export function doneChunk(evalCount: number, evalDurationNs: number) {
 export function runStream(
 	context: Parameters<typeof streamOllama>[1],
 	telemetry?: TelemetrySink,
+	turn: {
+		model?: Parameters<typeof streamOllama>[0];
+		options?: Parameters<typeof streamOllama>[2];
+	} = {},
 ): Promise<{ type: string }> {
 	return new Promise((resolve) => {
 		let last: { type: string } = { type: "none" };
@@ -57,6 +61,13 @@ export function runStream(
 				resolve(last);
 			}
 		}
-		streamOllama(model, context, undefined, settings, FakeStream, telemetry);
+		streamOllama(
+			turn.model ?? model,
+			context,
+			turn.options,
+			settings,
+			FakeStream,
+			telemetry,
+		);
 	});
 }

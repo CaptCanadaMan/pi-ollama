@@ -7,6 +7,7 @@
 // of a session. notify() routes through pi's render loop so output integrates
 // cleanly with the TUI regardless of when it fires.
 
+import type { OllamaShowResponse } from "./capabilities.js";
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import { discoverModels, type DiscoveredModel } from "./discovery.js";
 import { parseKeepAlive, type OllamaExtensionSettings } from "./settings.js";
@@ -15,6 +16,7 @@ import {
 	readGenerationRecords,
 	summarizeByModel,
 } from "./stats.js";
+import { parseThinking, thinkingSummary } from "./thinking.js";
 
 interface OllamaPs {
 	models?: Array<{
@@ -211,9 +213,16 @@ export function registerCommands(
 					);
 					return;
 				}
-				const show = await res.json();
+				const show = (await res.json()) as OllamaShowResponse;
+				// Which pi thinking levels this model gets, and anything it
+				// accepts that pi has no level name for (gh#13).
+				const thinking = parseThinking(show.thinking);
+				const summary =
+					thinking || show.capabilities?.includes("thinking")
+						? `${thinkingSummary(thinking)}\n\n`
+						: "";
 				ctx.ui.notify(
-					`${chosen}\n\n${JSON.stringify(show, null, 2)}`,
+					`${chosen}\n\n${summary}${JSON.stringify(show, null, 2)}`,
 					"info",
 				);
 			} catch (e) {

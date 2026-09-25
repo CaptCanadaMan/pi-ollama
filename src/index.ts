@@ -25,6 +25,7 @@ import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
 import { registerThroughputStatus, type StatusPi } from "./status.js";
 import { GenerationTelemetry } from "./telemetry.js";
+import { toThinkingLevelMap, type ThinkingLevelMap } from "./thinking.js";
 
 // ============================================================================
 // Minimal structural interfaces for the pi extension API.
@@ -37,6 +38,7 @@ interface ProviderModel {
 	api: string;
 	baseUrl: string;
 	reasoning: boolean;
+	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
 	contextWindow: number;
@@ -207,12 +209,16 @@ function toProviderModel(
 	//   2. min(discovered window, settings.numCtx) — capped default
 	const effectiveContextWindow =
 		settings.contextLength ?? Math.min(m.contextWindow, settings.numCtx);
+	// The model's own thinking values drive pi's level picker and the `think`
+	// value on the wire (gh#13). Absent = legacy on/off for every level.
+	const thinkingLevelMap = toThinkingLevelMap(m.thinking);
 	return {
 		id: m.id,
 		name: m.name,
 		api: "ollama-native",
 		baseUrl: settings.baseUrl,
 		reasoning: m.reasoning,
+		...(thinkingLevelMap && { thinkingLevelMap }),
 		input: m.vision ? ["text", "image"] : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: effectiveContextWindow,

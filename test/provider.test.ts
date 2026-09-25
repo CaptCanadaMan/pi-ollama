@@ -1,25 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-	buildChatRequestBody,
-	resolveThink,
-	shouldFlagSwallowedToolCall,
-} from "../src/provider.js";
+import { buildChatRequestBody, shouldFlagSwallowedToolCall } from "../src/provider.js";
+import { toThinkingLevelMap } from "../src/thinking.js";
 
-describe("resolveThink — pi thinking level → Ollama think flag", () => {
-	it("maps an absent level (pi's encoding of off) to an explicit false", () => {
-		expect(resolveThink(undefined)).toBe(false);
-	});
-
-	it("treats a literal 'off' string defensively as off", () => {
-		expect(resolveThink("off")).toBe(false);
-	});
-
-	it("maps any set level to true", () => {
-		for (const level of ["minimal", "low", "medium", "high", "xhigh"]) {
-			expect(resolveThink(level)).toBe(true);
-		}
-	});
-});
+// resolveThink's own cases live in thinking.test.ts.
 
 describe("shouldFlagSwallowedToolCall — issue #3 detection with the issue #4 batched-stream stand-down", () => {
 	const base = { sawToolCalls: false, sawDoneChunk: true };
@@ -82,6 +65,7 @@ describe("buildChatRequestBody — the wire body /api/chat actually receives", (
 		keepAlive: undefined,
 		reasoningCapable: false,
 		reasoningLevel: undefined,
+		thinkingLevelMap: undefined,
 		tools: undefined,
 	};
 
@@ -115,6 +99,29 @@ describe("buildChatRequestBody — the wire body /api/chat actually receives", (
 			buildChatRequestBody({ ...base, reasoningCapable: true, reasoningLevel: "high" })
 				.think,
 		).toBe(true);
+	});
+
+	it("sends the model's own level name when it reports thinking values (gh#13)", () => {
+		const thinkingLevelMap = toThinkingLevelMap({
+			values: [false, "low", "medium", "xhigh"],
+		});
+		const body = buildChatRequestBody({
+			...base,
+			reasoningCapable: true,
+			reasoningLevel: "medium",
+			thinkingLevelMap,
+		});
+		expect(body.think).toBe("medium");
+	});
+
+	it("omits the think key for off when the model can't switch thinking off", () => {
+		const body = buildChatRequestBody({
+			...base,
+			reasoningCapable: true,
+			reasoningLevel: undefined,
+			thinkingLevelMap: toThinkingLevelMap({ values: ["low", "medium", "high"] }),
+		});
+		expect("think" in body).toBe(false);
 	});
 
 	it("includes tools only when provided", () => {

@@ -49,8 +49,9 @@ export interface OllamaRequest {
 	tools?: OllamaTool[];
 	stream: true;
 	// Ollama defaults thinking-capable models to thinking ON when this field is
-	// absent — off must be sent explicitly, not omitted.
-	think?: boolean;
+	// absent — off must be sent explicitly, not omitted. A string is one of the
+	// model's own levels from /api/show's thinking.values (gh#13).
+	think?: boolean | string;
 	options?: {
 		num_ctx?: number;
 		temperature?: number;

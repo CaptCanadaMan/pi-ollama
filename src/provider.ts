@@ -22,6 +22,7 @@ import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 import type { TelemetrySink } from "./telemetry.js";
 import { parseGenerationMetrics } from "./throughput.js";
+import { resolveThink, type ThinkingLevelMap } from "./thinking.js";
 
 // ============================================================================
 // Types — minimal structural interfaces that match pi-ai's shapes.
@@ -39,6 +40,9 @@ interface PiModel {
 	maxTokens?: number;
 	input?: ("text" | "image")[];
 	reasoning?: boolean;
+	// Carried through from our registration by pi's provider-composer; older
+	// pi versions drop it, which falls back to the legacy on/off mapping.
+	thinkingLevelMap?: ThinkingLevelMap;
 }
 
 interface PiSimpleStreamOptions {
@@ -114,18 +118,6 @@ function mapDoneReason(reason: string | undefined): string {
 	}
 }
 
-/**
- * Map pi's thinking level to Ollama's `think` flag. pi encodes thinking-off as
- * the `reasoning` option being absent (its ThinkingLevel type has no "off"
- * member), while Ollama defaults thinking-capable models to thinking ON when
- * `think` is omitted — so off only works as an explicit `false` on the wire.
- * A literal "off" string is also treated as off, defensively — the option
- * crosses a runtime boundary from whatever pi version is hosting us.
- */
-export function resolveThink(reasoning: string | undefined): boolean {
-	return reasoning !== undefined && reasoning !== "off";
-}
-
 /** Signals the swallowed-tool-call guard decides on (see below). */
 export interface SwallowSignals {
 	sawToolCalls: boolean;
@@ -186,6 +178,8 @@ export interface ChatBodyInputs {
 	reasoningCapable: boolean;
 	/** pi's reasoning level for this turn (absent = thinking off). */
 	reasoningLevel: string | undefined;
+	/** The model's per-level think values (gh#13), or undefined = legacy on/off. */
+	thinkingLevelMap: ThinkingLevelMap | undefined;
 	/** Already-converted tool definitions, or undefined to omit. */
 	tools: OllamaRequest["tools"] | undefined;
 }
@@ -208,9 +202,11 @@ export function buildChatRequestBody(inputs: ChatBodyInputs): OllamaRequest {
 		body.keep_alive = inputs.keepAlive;
 	}
 	// Only sent for thinking-capable models; Ollama rejects `think` on models
-	// without thinking support.
+	// without thinking support. Also omitted when off was asked for on a model
+	// that can't switch thinking off (resolveThink returns undefined).
 	if (inputs.reasoningCapable) {
-		body.think = resolveThink(inputs.reasoningLevel);
+		const think = resolveThink(inputs.reasoningLevel, inputs.thinkingLevelMap);
+		if (think !== undefined) body.think = think;
 	}
 	if (inputs.tools !== undefined) {
 		body.tools = inputs.tools;
@@ -287,6 +283,7 @@ export function streamOllama(
 				keepAlive: settings.keepAlive,
 				reasoningCapable: Boolean(model.reasoning),
 				reasoningLevel: options?.reasoning,
+				thinkingLevelMap: model.thinkingLevelMap,
 				tools,
 			});
 

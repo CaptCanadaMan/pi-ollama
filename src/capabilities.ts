@@ -4,6 +4,8 @@
 // gives a richer picture but capability detection still requires heuristics
 // for models that predate Ollama's capabilities array.
 
+import { type OllamaThinking, parseThinking } from "./thinking.js";
+
 export interface OllamaShowResponse {
 	details?: {
 		family?: string;
@@ -12,12 +14,16 @@ export interface OllamaShowResponse {
 	};
 	model_info?: Record<string, unknown>;
 	capabilities?: string[];
+	/** Ollama >= 0.34: the `think` values this model accepts (gh#13). */
+	thinking?: unknown;
 }
 
 export interface InferredCapabilities {
 	tools: boolean;
 	vision: boolean;
 	reasoning: boolean;
+	/** Validated thinking values, or undefined when the server reports none. */
+	thinking: OllamaThinking | undefined;
 	contextWindow: number;
 	maxTokens: number;
 }
@@ -46,8 +52,11 @@ export function inferCapabilities(
 		families.includes("clip") ||
 		caps.includes("image");
 
+	const thinking = parseThinking(show.thinking);
+
 	const reasoning =
 		caps.includes("thinking") ||
+		(thinking?.values.some((v) => v !== false) ?? false) ||
 		REASONING_PATTERNS.some((p) => p.test(modelId));
 
 	const contextWindow = extractContextWindow(show.model_info) ?? 32768;
@@ -56,6 +65,7 @@ export function inferCapabilities(
 		tools,
 		vision,
 		reasoning,
+		thinking,
 		contextWindow,
 		maxTokens: 8192,
 	};
