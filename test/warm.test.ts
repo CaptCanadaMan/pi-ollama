@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PersistedConfig } from "../src/config.js";
 
 // The config module is mocked so /ollama-warm-up never touches the real ~/.pi file.
+// Like the real file, what was saved is what the next load reads back.
 let saved: PersistedConfig | undefined;
 vi.mock("../src/config.js", () => ({
-	loadPersistedConfig: () => ({}),
+	persistedConfigError: () => undefined,
+	loadPersistedConfig: () => ({ ...saved }),
 	savePersistedConfig: (c: PersistedConfig) => {
 		saved = c;
 	},

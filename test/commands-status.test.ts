@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerCommands } from "../src/commands.js";
 import type { DiscoveredModel } from "../src/discovery.js";
+import { emptyModelConfig } from "../src/model-config.js";
 
 type Handler = (args: string, ctx: unknown) => void | Promise<void>;
 
 const baseUrl = "http://ollama.test";
+
+// The status rows format context sizes in the host's locale ("262,144" in
+// en-US, "262 144" in en-ZA), so build the expected text the same way.
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const gemmaRow = `gemma4:26b\\s+ctx:${escapeRegExp((262144).toLocaleString())}\\s+\\[tools, vision, reasoning\\]`;
 
 const gemma: DiscoveredModel = {
 	id: "gemma4:26b",
@@ -25,6 +31,8 @@ function command(name: string, models: DiscoveredModel[], ui: object = {}, overr
 	const settings = {
 		baseUrl,
 		numCtx: 32768,
+		modelConfig: emptyModelConfig(),
+		configIssues: [],
 		ghostRetries: 2,
 		throughput: true,
 		apiKeyStatus: "none" as const,
@@ -68,7 +76,7 @@ describe("/ollama-status", () => {
 
 		expect(level).toBe("info");
 		expect(text).toContain("1 model(s) registered");
-		expect(text).toMatch(/gemma4:26b\s+ctx:262,144\s+\[tools, vision, reasoning\]/);
+		expect(text).toMatch(new RegExp(gemmaRow));
 		expect(text).toContain("gemma4:26b (18.0 GB VRAM)");
 	});
 
@@ -160,7 +168,7 @@ describe("/ollama-info <model>", () => {
 
 		const offered = select.mock.calls[0]![1];
 		expect(offered).toHaveLength(1);
-		expect(offered[0]).toMatch(/^gemma4:26b\s+ctx:262,144\s+\[tools, vision, reasoning\]$/);
+		expect(offered[0]).toMatch(new RegExp(`^${gemmaRow}$`));
 		expect(text.startsWith("gemma4:26b\n")).toBe(true);
 	});
 

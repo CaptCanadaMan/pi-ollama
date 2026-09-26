@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PersistedConfig } from "../src/config.js";
 import type { DiscoveredModel } from "../src/discovery.js";
+import { emptyModelConfig } from "../src/model-config.js";
 
 // The config module is mocked so saved choices never touch the real ~/.pi file.
 let saved: PersistedConfig | undefined;
 let stored: PersistedConfig = {};
 vi.mock("../src/config.js", () => ({
+	persistedConfigError: () => undefined,
 	loadPersistedConfig: () => ({ ...stored }),
 	savePersistedConfig: (c: PersistedConfig) => {
 		saved = c;
@@ -48,6 +50,8 @@ function setup(opts: Setup = {}) {
 	const settings = {
 		baseUrl,
 		numCtx: 32768,
+		modelConfig: emptyModelConfig(),
+		configIssues: [],
 		ghostRetries: 2,
 		throughput: true,
 		apiKeyStatus: "none" as const,

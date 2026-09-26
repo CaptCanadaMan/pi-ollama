@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PersistedConfig } from "../src/config.js";
+import { emptyModelConfig } from "../src/model-config.js";
 
 // The config module is mocked so approvals never touch the real ~/.pi file.
 let saved: PersistedConfig | undefined;
 const stored: PersistedConfig = { keepAlive: "1h" };
 vi.mock("../src/config.js", () => ({
+	persistedConfigError: () => undefined,
 	loadPersistedConfig: () => ({ ...stored }),
 	savePersistedConfig: (c: PersistedConfig) => {
 		saved = c;
@@ -28,6 +30,8 @@ function setup(answer: string | undefined, apiKeyStatus: "none" | "approved" | "
 	const settings = {
 		baseUrl: home,
 		numCtx: 32768,
+		modelConfig: emptyModelConfig(),
+		configIssues: [],
 		ghostRetries: 2,
 		throughput: true,
 		apiKeyStatus,

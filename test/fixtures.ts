@@ -3,11 +3,14 @@
 
 import { streamOllama } from "../src/provider.js";
 import type { TelemetrySink } from "../src/telemetry.js";
+import { emptyModelConfig } from "../src/model-config.js";
 
 export const settings = {
 	baseUrl: "http://ollama.test",
 	keepAlive: undefined,
 	numCtx: 32768,
+	modelConfig: emptyModelConfig(),
+	configIssues: [],
 	ghostRetries: 2,
 	contextLength: undefined,
 	throughput: true,
