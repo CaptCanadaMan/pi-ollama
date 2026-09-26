@@ -17,6 +17,7 @@ import {
 	showModel,
 } from "./ollama-client.js";
 import type { OllamaThinking } from "./thinking.js";
+import { type ConfigIssue, type ModelConfigFile, resolveServerUrl } from "./model-config.js";
 
 export interface DiscoveredModel {
 	id: string;
@@ -28,6 +29,8 @@ export interface DiscoveredModel {
 	thinking?: OllamaThinking;
 	contextWindow: number;
 	maxTokens: number;
+	/** Set when the model is pinned to a named server (model-config.ts). */
+	baseUrl?: string;
 }
 
 const CACHE_PATH = join(
@@ -79,21 +82,91 @@ async function describeModel(
 	try {
 		const show = await showModel(target, id, options);
 		if (!canChat(show)) return undefined;
-		const caps = inferCapabilities(id, show);
-		return {
-			id,
-			name: friendlyName(id),
-			tools: caps.tools,
-			vision: caps.vision,
-			reasoning: caps.reasoning,
-			...(caps.thinking && { thinking: caps.thinking }),
-			contextWindow: caps.contextWindow,
-			maxTokens: caps.maxTokens,
-		};
+		return fromShow(id, show);
 	} catch {
 		// /api/show failed for this model — include it with conservative defaults.
 		return minimal(id);
 	}
+}
+
+/** The model as pi should see it, from its /api/show response. */
+function fromShow(
+	id: string,
+	show: Parameters<typeof inferCapabilities>[1],
+	baseUrl?: string,
+): DiscoveredModel {
+	const caps = inferCapabilities(id, show);
+	return {
+		id,
+		name: friendlyName(id),
+		tools: caps.tools,
+		vision: caps.vision,
+		reasoning: caps.reasoning,
+		...(caps.thinking && { thinking: caps.thinking }),
+		contextWindow: caps.contextWindow,
+		maxTokens: caps.maxTokens,
+		...(baseUrl && { baseUrl }),
+	};
+}
+
+/**
+ * Models pinned to a named server (model-config.ts): each is looked up on its
+ * own server and registered with that server's address. A lookup that fails
+ * falls back to the cached entry for the same server, if any. The API key is
+ * never sent to these servers - targetFor() only sends it to the configured host.
+ */
+export async function discoverPinned(
+	config: ModelConfigFile,
+	cached: DiscoveredModel[],
+	options: RequestOptions = {},
+): Promise<{ models: DiscoveredModel[]; issues: ConfigIssue[] }> {
+	const models: DiscoveredModel[] = [];
+	const issues: ConfigIssue[] = [];
+	await Promise.all(
+		Object.entries(config.models).map(async ([id, entry]) => {
+			const baseUrl = resolveServerUrl(config, entry.server);
+			if (!baseUrl) return;
+			const path = `models[${JSON.stringify(id)}].server`;
+			try {
+				const show = await showModel({ baseUrl }, id, options);
+				if (!canChat(show)) {
+					issues.push({ severity: "warning", path, message: `= "${entry.server}": ${id} on ${baseUrl} can't chat - not registered` });
+					return;
+				}
+				models.push(fromShow(id, show, baseUrl));
+			} catch (e) {
+				const fallback = cached.find((m) => m.id === id && m.baseUrl === baseUrl);
+				if (fallback) models.push(fallback);
+				issues.push({
+					severity: "warning",
+					path,
+					message: `= "${entry.server}": lookup on ${baseUrl} failed (${e instanceof Error ? e.message : String(e)}) - ${fallback ? "using the cached entry" : "not registered"}`,
+				});
+			}
+		}),
+	);
+	return { models, issues };
+}
+
+/** The default server's models, with pinned ones replacing same-named entries. */
+export function mergePinned(discovered: DiscoveredModel[], pinned: DiscoveredModel[]): DiscoveredModel[] {
+	const pinnedIds = new Set(pinned.map((m) => m.id));
+	return [...discovered.filter((m) => !pinnedIds.has(m.id)), ...pinned];
+}
+
+/**
+ * The model list when the default server can't be reached: its cached models
+ * plus a fresh lookup of the pinned ones, whose servers may well be up. Cached
+ * entries for other servers are dropped here - discoverPinned only reuses one
+ * for a server that is still configured - so a removed server is never used.
+ */
+export async function fallbackModels(
+	config: ModelConfigFile,
+	cached: DiscoveredModel[],
+	options: RequestOptions = {},
+): Promise<{ models: DiscoveredModel[]; issues: ConfigIssue[] }> {
+	const pinned = await discoverPinned(config, cached, options);
+	return { models: mergePinned(cached.filter((m) => !m.baseUrl), pinned.models), issues: pinned.issues };
 }
 
 function minimal(id: string): DiscoveredModel {

@@ -7,11 +7,17 @@
 // of a session. notify() routes through pi's render loop so output integrates
 // cleanly with the TUI regardless of when it fires.
 
-import { loadPersistedConfig, savePersistedConfig } from "./config.js";
+import { loadPersistedConfig, persistedConfigError, savePersistedConfig } from "./config.js";
 import type { DiscoveredModel } from "./discovery.js";
 import { errorText } from "./errors.js";
 import { listModels, runningModels, showModel } from "./ollama-client.js";
-import { type ApiKeyStatus, parseKeepAlive, type OllamaExtensionSettings } from "./settings.js";
+import {
+	type ApiKeyStatus,
+	parseKeepAlive,
+	type OllamaExtensionSettings,
+	reloadModelConfig,
+} from "./settings.js";
+import { checkGlobalValue, formatIssue, globalValue, setGlobalSetting } from "./model-config.js";
 import {
 	formatSessionStats,
 	readGenerationRecords,
@@ -84,12 +90,17 @@ export function registerCommands(
 			const baseUrl = settings.baseUrl;
 			const lines: string[] = [];
 			lines.push(`Ollama base URL: ${baseUrl}`);
+			const globalKeepAlive = globalValue(settings.modelConfig, settings, "keepAlive");
 			lines.push(
-				settings.keepAlive !== undefined
-					? `keep_alive: ${settings.keepAlive} (override — sent on every request)`
+				globalKeepAlive !== undefined
+					? `keep_alive: ${globalKeepAlive} (override — sent on every request)`
 					: "keep_alive: defer to server (default)",
 			);
-			lines.push(`Warm-up: ${settings.warm ? "on" : "off"} (/ollama-warm-up to change)`);
+			lines.push(
+				`Warm-up: ${(globalValue(settings.modelConfig, settings, "warm") ?? true) ? "on" : "off"} (/ollama-warm-up to change)`,
+			);
+			const modelCount = Object.keys(settings.modelConfig.models).length;
+			if (modelCount > 0) lines.push(`Per-model config: ${modelCount} model(s) (pi-ollama-config.json)`);
 			const keyLine = API_KEY_STATUS_LINES[settings.apiKeyStatus];
 			if (keyLine) lines.push(keyLine);
 			if (settings.startedOllamaStopHint) {
@@ -141,6 +152,7 @@ export function registerCommands(
 					`Refreshed model list from ${settings.baseUrl} — ${models.length} model(s) registered`,
 					"info",
 				);
+				for (const issue of settings.configIssues) ctx.ui.notify(formatIssue(issue), issue.severity);
 			} catch (e) {
 				ctx.ui.notify(`Refresh failed: ${errorText(e)}`, "error");
 			}
@@ -219,7 +231,7 @@ export function registerCommands(
 			const USE_DEFAULT = "Use system default (model maximum, capped at 32,768)";
 			const CUSTOM = "Custom value…";
 
-			const current = settings.contextLength;
+			const current = globalValue(settings.modelConfig, settings, "contextLength");
 			const currentNote =
 				current !== undefined
 					? `Current override: ${current.toLocaleString()} tokens`
@@ -254,11 +266,11 @@ export function registerCommands(
 					return;
 				}
 				const n = parseInt(raw.trim(), 10);
-				if (!Number.isFinite(n) || n <= 0) {
-					ctx.ui.notify(
-						"Invalid context length. Must be a positive integer.",
-						"error",
-					);
+				// Same rule the config validator applies (model-config.ts), so a value
+				// accepted here is never silently dropped on the next load.
+				const reason = Number.isFinite(n) ? checkGlobalValue("contextLength", n) : "must be a whole number";
+				if (reason) {
+					ctx.ui.notify(`Invalid context length: ${reason}.`, "error");
 					return;
 				}
 				newValue = n;
@@ -274,13 +286,15 @@ export function registerCommands(
 			// Persist to disk AND mutate the shared settings object so the
 			// next /api/chat request picks up the new value without a relaunch.
 			const persisted = loadPersistedConfig();
-			if (newValue === undefined) {
-				delete persisted.contextLength;
-			} else {
-				persisted.contextLength = newValue;
+			// Never save over a file that didn't parse - that would wipe every per-model entry.
+			const readError = persistedConfigError();
+			if (readError) {
+				ctx.ui.notify(`Not saved: pi-ollama-config.json couldn't be read (${readError}). Fix the file first.`, "error");
+				return;
 			}
+			setGlobalSetting(persisted, "contextLength", newValue);
 			savePersistedConfig(persisted);
-			settings.contextLength = newValue;
+			reloadModelConfig(settings);
 
 			// Re-register the provider so pi's model registry (and the UI
 			// context-usage counter) reflects the new effective contextWindow.
@@ -315,7 +329,7 @@ export function registerCommands(
 			];
 			const CUSTOM = "Custom value…";
 
-			const current = settings.keepAlive;
+			const current = globalValue(settings.modelConfig, settings, "keepAlive");
 			const currentNote =
 				current !== undefined
 					? `Current override: ${current}`
@@ -366,13 +380,15 @@ export function registerCommands(
 			// (No provider re-registration needed — keep_alive doesn't affect
 			// the model registry, unlike /ollama-context.)
 			const persisted = loadPersistedConfig();
-			if (newValue === undefined) {
-				delete persisted.keepAlive;
-			} else {
-				persisted.keepAlive = newValue;
+			// Never save over a file that didn't parse - that would wipe every per-model entry.
+			const readError = persistedConfigError();
+			if (readError) {
+				ctx.ui.notify(`Not saved: pi-ollama-config.json couldn't be read (${readError}). Fix the file first.`, "error");
+				return;
 			}
+			setGlobalSetting(persisted, "keepAlive", newValue);
 			savePersistedConfig(persisted);
-			settings.keepAlive = newValue;
+			reloadModelConfig(settings);
 
 			if (newValue === undefined) {
 				ctx.ui.notify(

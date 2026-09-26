@@ -22,6 +22,7 @@ import { describeOllamaError } from "./errors.js";
 import { openChat, targetFor } from "./ollama-client.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
+import { resolveModelConfig, toOllamaOptions } from "./model-config.js";
 import type { TelemetrySink } from "./telemetry.js";
 import { parseGenerationMetrics } from "./throughput.js";
 import { resolveThink, type ThinkingLevelMap } from "./thinking.js";
@@ -227,13 +228,20 @@ export function buildChatRequestBody(inputs: ChatBodyInputs): OllamaRequest {
  * this: a warm-up with any other num_ctx would just make the first turn reload.
  */
 export function requestOptions(
-	model: { contextWindow?: number },
-	settings: { numCtx: number },
+	model: { id?: string; contextWindow?: number },
+	settings: { numCtx: number } & Partial<
+		Pick<OllamaExtensionSettings, "modelConfig" | "contextLength" | "keepAlive" | "warm">
+	>,
 	turn?: { temperature?: number; maxTokens?: number },
 ): NonNullable<OllamaRequest["options"]> {
 	const options: NonNullable<OllamaRequest["options"]> = {
 		num_ctx: model.contextWindow ?? settings.numCtx ?? DEFAULT_NUM_CTX,
 	};
+	// Per-model sampling/gpu options (model-config.ts), applied before pi's own
+	// per-turn values so a temperature pi sends still wins.
+	if (settings.modelConfig && model.id !== undefined) {
+		Object.assign(options, toOllamaOptions(resolveModelConfig(settings.modelConfig, settings, model.id)));
+	}
 	if (turn?.temperature !== undefined) options.temperature = turn.temperature;
 	if (turn?.maxTokens !== undefined) options.num_predict = turn.maxTokens;
 	return options;
@@ -260,7 +268,7 @@ export function buildTurnRequest(
 		modelId: model.id,
 		messages,
 		options: requestOptions(model, settings, options),
-		keepAlive: settings.keepAlive,
+		keepAlive: resolveModelConfig(settings.modelConfig, settings, model.id).keepAlive,
 		reasoningCapable: Boolean(model.reasoning),
 		reasoningLevel: options?.reasoning,
 		thinkingLevelMap: model.thinkingLevelMap,
@@ -290,6 +298,33 @@ export function streamOllama(
 	};
 
 	(async () => {
+		// Idle timeout + narrow retry, per model (model-config.ts request.*).
+		// The timer resets on every chunk, so only a connection that goes silent
+		// trips it, never a slow-but-healthy model.
+		// It retries only when nothing at all arrived in that attempt. The body
+		// of this loop is deliberately not re-indented, to keep the diff against
+		// upstream reviewable.
+		const requestConfig = resolveModelConfig(settings.modelConfig, settings, model.id).request;
+		const REQUEST_IDLE_TIMEOUT_MS = requestConfig.idleTimeoutMs;
+		const REQUEST_MAX_RETRIES = requestConfig.maxRetries;
+		for (let requestAttempt = 0; requestAttempt <= REQUEST_MAX_RETRIES; requestAttempt++) {
+		let anyChunkReceivedThisAttempt = false;
+		let idleTimedOut = false;
+		const timeoutController = new AbortController();
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+		const armIdleTimeout = () => {
+			if (REQUEST_IDLE_TIMEOUT_MS === 0) return;
+			if (timeoutId) clearTimeout(timeoutId);
+			timeoutId = setTimeout(() => {
+				idleTimedOut = true;
+				timeoutController.abort();
+			}, REQUEST_IDLE_TIMEOUT_MS);
+		};
+		armIdleTimeout();
+		const requestSignal = options?.signal
+			? AbortSignal.any([options.signal, timeoutController.signal])
+			: timeoutController.signal;
+
 		// Build the output message shell — populated incrementally as chunks arrive.
 		const output: Record<string, unknown> = {
 			role: "assistant",
@@ -313,6 +348,7 @@ export function streamOllama(
 			const target = targetFor(settings, model.baseUrl);
 
 			let body = buildTurnRequest(model, context, options, settings);
+			if (requestConfig.logprobs) body.logprobs = true;
 			const numCtx = body.options?.num_ctx;
 
 			// Allow callers to inspect or replace the request body.
@@ -348,7 +384,7 @@ export function streamOllama(
 				dumpId = dumpRequest(body);
 
 				const response = await openChat(target, body, {
-					signal: options?.signal,
+					signal: requestSignal,
 					headers: [model.headers, options?.headers],
 				});
 
@@ -392,6 +428,8 @@ export function streamOllama(
 						streamEndedEarly = true;
 						break;
 					}
+					armIdleTimeout();
+					anyChunkReceivedThisAttempt = true;
 					buf += decoder.decode(value, { stream: true });
 					const nl = buf.indexOf("\n");
 					if (nl !== -1) {
@@ -673,6 +711,8 @@ export function streamOllama(
 					streamDoneFlag = true;
 					continue;
 				}
+				armIdleTimeout();
+				anyChunkReceivedThisAttempt = true;
 				buffer += decoder.decode(value, { stream: true });
 			}
 
@@ -781,7 +821,24 @@ export function streamOllama(
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
-		} catch (error) {
+			return;
+		} catch (caught) {
+			let error = caught;
+			const ourTimeout = idleTimedOut && !options?.signal?.aborted;
+			if (ourTimeout && !anyChunkReceivedThisAttempt && requestAttempt < REQUEST_MAX_RETRIES) {
+				clearTimeout(timeoutId);
+				dbg("idle-timeout-retry", { requestAttempt, idleTimeoutMs: REQUEST_IDLE_TIMEOUT_MS });
+				continue;
+			}
+			// fetch/read report a bare "This operation was aborted" - say what happened.
+			if (ourTimeout) {
+				error = new Error(
+					`Ollama request idle-timed-out: nothing received for ${REQUEST_IDLE_TIMEOUT_MS / 1000}s` +
+						(anyChunkReceivedThisAttempt ? " mid-response" : ` after ${requestAttempt + 1} attempt(s)`) +
+						`. The connection to the Ollama host is probably dead, ` +
+						`not Ollama being slow. Tune with request.idleTimeoutMs in pi-ollama-config.json.`,
+				);
+			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage =
 				error instanceof Error ? error.message : JSON.stringify(error);
@@ -792,6 +849,10 @@ export function streamOllama(
 			report((t) => t.failed());
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
+			return;
+		} finally {
+			clearTimeout(timeoutId);
+		}
 		}
 	})();
 

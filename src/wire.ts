@@ -41,6 +41,8 @@ export interface OllamaChunk {
 	eval_count?: number;
 	eval_duration?: number;
 	error?: string;
+	// One entry per streamed token when the request set logprobs:true (model-config.ts request.logprobs).
+	logprobs?: { token: string; logprob: number; bytes?: number[] }[];
 }
 
 export interface OllamaRequest {
@@ -52,10 +54,28 @@ export interface OllamaRequest {
 	// absent — off must be sent explicitly, not omitted. A string is one of the
 	// model's own levels from /api/show's thinking.values (gh#13).
 	think?: boolean | string;
+	// Everything past num_predict comes from the per-model config (model-config.ts).
 	options?: {
 		num_ctx?: number;
 		temperature?: number;
 		num_predict?: number;
+		top_p?: number;
+		top_k?: number;
+		min_p?: number;
+		typical_p?: number;
+		repeat_penalty?: number;
+		repeat_last_n?: number;
+		presence_penalty?: number;
+		frequency_penalty?: number;
+		seed?: number;
+		num_keep?: number;
+		stop?: string[];
+		/** Layers offloaded to the GPU - not a GPU count. */
+		num_gpu?: number;
+		main_gpu?: number;
+		num_batch?: number;
+		num_thread?: number;
+		use_mmap?: boolean;
 	};
 	keep_alive?: string | number;
 	format?: string | object;
@@ -63,4 +83,6 @@ export interface OllamaRequest {
 	// its oldest messages. We always send false so Ollama refuses instead and
 	// pi can compact (see errors.ts).
 	truncate?: boolean;
+	// Per-token log-probabilities (model-config.ts request.logprobs). No top_logprobs.
+	logprobs?: boolean;
 }
