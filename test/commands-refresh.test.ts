@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerCommands } from "../src/commands.js";
 import type { DiscoveredModel } from "../src/discovery.js";
+import { emptyModelConfig } from "../src/model-config.js";
 
 type Handler = (args: string, ctx: unknown) => void | Promise<void>;
 
@@ -19,7 +20,7 @@ async function runRefresh(refresh: () => Promise<DiscoveredModel[]>) {
 	const pi = {
 		registerCommand: (n: string, config: { handler: Handler }) => handlers.set(n, config.handler),
 	};
-	const settings = { baseUrl: "http://ollama.test", numCtx: 32768, ghostRetries: 2, throughput: true };
+	const settings = { baseUrl: "http://ollama.test", numCtx: 32768, ghostRetries: 2, modelConfig: emptyModelConfig(), configIssues: [], throughput: true };
 	registerCommands(pi, settings, () => [], refresh, () => undefined);
 	const notify = vi.fn();
 	await handlers.get("ollama-refresh")?.("", { ui: { notify } });

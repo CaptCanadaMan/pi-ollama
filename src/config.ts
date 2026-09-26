@@ -40,16 +40,35 @@ export interface PersistedConfig {
 	autostart?: "always" | "never";
 	/** Warm-up on/off set via /ollama-warm-up. Absent = OLLAMA_NATIVE_WARM, else on. */
 	warm?: boolean;
+	/** Global model defaults (model-config.ts). Validated before use. */
+	defaults?: Record<string, unknown>;
+	/** Per-model settings, keyed by exact model id (model-config.ts). */
+	models?: Record<string, unknown>;
+	/** Named Ollama servers a model can be pinned to (model-config.ts). */
+	servers?: Record<string, unknown>;
+}
+
+// Why the last loadPersistedConfig() fell back to {}, if it did (reported by
+// model-config.ts). A getter rather than an exported `let`, so it doesn't
+// depend on the module loader preserving live bindings.
+let lastConfigError: string | undefined;
+export function persistedConfigError(): string | undefined {
+	return lastConfigError;
 }
 
 export function loadPersistedConfig(): PersistedConfig {
+	lastConfigError = undefined;
 	try {
 		if (!existsSync(CONFIG_PATH)) return {};
 		const raw = readFileSync(CONFIG_PATH, "utf-8");
 		const parsed = JSON.parse(raw);
-		if (typeof parsed !== "object" || parsed === null) return {};
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			lastConfigError = "the file must contain a JSON object";
+			return {};
+		}
 		return parsed as PersistedConfig;
-	} catch {
+	} catch (e) {
+		lastConfigError = e instanceof Error ? e.message : String(e);
 		return {};
 	}
 }

@@ -8,12 +8,13 @@
 // turn only reads the user's message. On a pi that can't report its system
 // prompt, it falls back to loading the weights alone.
 
-import { loadPersistedConfig, savePersistedConfig } from "./config.js";
+import { loadPersistedConfig, persistedConfigError, savePersistedConfig } from "./config.js";
 import { dbg } from "./debug.js";
 import { errorText } from "./errors.js";
 import { loadModel, targetFor } from "./ollama-client.js";
 import { buildChatRequestBody, buildTurnRequest, type PiModel, requestOptions } from "./provider.js";
-import type { OllamaExtensionSettings } from "./settings.js";
+import { type OllamaExtensionSettings, reloadModelConfig } from "./settings.js";
+import { globalValue, resolveModelConfig, setGlobalSetting } from "./model-config.js";
 import { setFooterStatus, type StatusContext } from "./status.js";
 
 type WarmModel = PiModel;
@@ -110,7 +111,7 @@ export function registerWarmup(
 				modelId: model.id,
 				messages: [],
 				options: requestOptions(model, settings),
-				keepAlive: settings.keepAlive,
+				keepAlive: resolveModelConfig(settings.modelConfig, settings, model.id).keepAlive,
 				reasoningCapable: false,
 				reasoningLevel: undefined,
 				thinkingLevelMap: undefined,
@@ -152,9 +153,11 @@ export function registerWarmup(
 		}
 	};
 
-	// settings.warm is checked here, per request, so /ollama-warm-up takes effect at once.
+	// warm is resolved per model, per request (model-config.ts), so /ollama-warm-up and config edits take effect at once.
 	const request = (model: WarmModel | undefined, ctx: WarmContext) => {
-		if (settings.warm && model?.api === "ollama-native") void warm(model, ctx);
+		if (model?.api === "ollama-native" && resolveModelConfig(settings.modelConfig, settings, model.id).warm) {
+			void warm(model, ctx);
+		}
 	};
 	pi.on?.("session_start", (_event, ctx) => request(ctx.model, ctx));
 	pi.on?.("model_select", (event, ctx) => request(event.model, ctx));
@@ -169,15 +172,21 @@ export function registerWarmup(
 			"Turn model warm-up on or off: load the model at session start and on model switch. Persistent across restarts.",
 		handler: async (_args, ctx) => {
 			const choice = await ctx.ui?.select?.(
-				`Model warm-up - currently ${settings.warm ? "on" : "off"}`,
+				`Model warm-up - currently ${(globalValue(settings.modelConfig, settings, "warm") ?? true) ? "on" : "off"}`,
 				[ON, OFF],
 			);
 			if (!choice) return;
 			const on = choice === ON;
 			const config = loadPersistedConfig();
-			config.warm = on;
+			// Never save over a file that didn't parse - that would wipe every per-model entry.
+			const readError = persistedConfigError();
+			if (readError) {
+				ctx.ui?.notify?.(`Not saved: pi-ollama-config.json couldn't be read (${readError}). Fix the file first.`, "error");
+				return;
+			}
+			setGlobalSetting(config, "warm", on);
 			savePersistedConfig(config);
-			settings.warm = on;
+			reloadModelConfig(settings);
 			ctx.ui?.notify?.(
 				on
 					? "Model warm-up on: the model loads at session start and on switch. Persists across pi launches."

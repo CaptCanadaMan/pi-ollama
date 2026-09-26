@@ -5,6 +5,7 @@ import type { PersistedConfig } from "../src/config.js";
 // module is mocked so these never touch the real ~/.pi file.
 const persisted: PersistedConfig = {};
 vi.mock("../src/config.js", () => ({
+	persistedConfigError: () => undefined,
 	loadPersistedConfig: () => persisted,
 	savePersistedConfig: () => undefined,
 }));

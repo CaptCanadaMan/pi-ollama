@@ -107,7 +107,7 @@ Switch to one of the discovered models and use pi normally.
 | Command | Description |
 |---|---|
 | `/ollama-status` | Show the Ollama base URL, settings, registered models with capability flags, and currently loaded models. |
-| `/ollama-refresh` | Re-discover models from `/api/tags` + `/api/show` and re-register the provider. Useful after `ollama pull <model>`. |
+| `/ollama-refresh` | Re-read the [config file](#per-model-configuration), re-discover models from `/api/tags` + `/api/show` and re-register the provider. Useful after `ollama pull <model>`. |
 | `/ollama-info [model-id]` | Show capability details for a model. Omit the argument to pick from a list of currently registered models. |
 | `/ollama-context` | Set the context length (`num_ctx`) pi-ollama sends to `/api/chat`. Picker with common presets + custom input. Persists across pi launches. |
 | `/ollama-keep-alive` | Set the `keep_alive` pi-ollama sends to `/api/chat`, or (the default) send none and let the Ollama server's own setting decide. Picker with presets + custom input. Persists across pi launches. |
@@ -121,10 +121,10 @@ Switch to one of the discovered models and use pi normally.
 | Variable | Default | Purpose |
 |---|---|---|
 | `OLLAMA_HOST` | `localhost:11434` | Ollama server host[:port]. May include or omit protocol. |
-| `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` if used. |
-| `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** - a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by `/ollama-keep-alive` if used. |
+| `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` or the [config file](#per-model-configuration). |
+| `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** - a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by `/ollama-keep-alive` or the [config file](#per-model-configuration). |
 | `OLLAMA_API_KEY` | unset | Bearer token for an Ollama behind a token-checking proxy. Only sent to `OLLAMA_HOST`, and only after you approve it (see [Using a remote Ollama with an API key](#using-a-remote-ollama-with-an-api-key)). |
-| `OLLAMA_NATIVE_WARM` | on | Warm-up at session start and on model or thinking-level changes. Set to `0` to switch it off. Superseded by `/ollama-warm-up` if used. |
+| `OLLAMA_NATIVE_WARM` | on | Warm-up at session start and on model or thinking-level changes. Set to `0` to switch it off. Superseded by `/ollama-warm-up` or the [config file](#per-model-configuration). |
 | `OLLAMA_NATIVE_DEBUG` | unset | Set to `1` to enable per-chunk debug logging. Writes to a **file** (see below) - not stderr, since stderr writes corrupt pi's TUI rendering. |
 | `OLLAMA_NATIVE_DEBUG_LOG` | `~/.pi/agent/cache/pi-ollama-debug.log` | Override the default debug log path. |
 | `OLLAMA_NATIVE_DUMP_DIR` | unset | If set, writes paired `req-*.json` / `res-*.ndjson` files per request - exact replay artifacts for diagnostics. |
@@ -145,9 +145,58 @@ pi-ollama sends a context size (`num_ctx`) with every request, and registers the
 
 By default it's the model's trained context window, capped at 32,768 tokens. Some models report 262,144 or more, and asking Ollama for all of it would take more memory than most machines have.
 
-To change it, run `/ollama-context` and pick a preset or enter your own number. It applies from the next request and is saved across pi launches. To go back to the default, pick "Use system default" in the same picker. You can also set `OLLAMA_CONTEXT_LENGTH` in the environment, which works the same way for Ollama itself; a value chosen in `/ollama-context` takes priority over it.
+To change it, run `/ollama-context` and pick a preset or enter your own number. It applies from the next request and is saved across pi launches. To go back to the default, pick "Use system default" in the same picker. You can also set `OLLAMA_CONTEXT_LENGTH` in the environment, which works the same way for Ollama itself; a value chosen in `/ollama-context` takes priority over it. Per model: see [Per-model configuration](#per-model-configuration).
 
 A bigger window holds more of the conversation but uses more memory, and a model that doesn't fit in memory will fail to load. If you hit that, step the size down. Changing the size makes Ollama reload the model on the next request.
+
+---
+
+## Per-model configuration
+
+Optional settings in `~/.pi/agent/cache/pi-ollama-config.json` (the file the slash commands save to). `defaults` applies to every model; `models` overrides it per model id. Run `/ollama-refresh` after editing.
+
+```json
+{
+  "defaults": {
+    "contextLength": 32768,
+    "sampling": { "topP": 0.9 },
+    "request": { "idleTimeoutMs": 240000 }
+  },
+  "servers": {
+    "remote": { "host": "10.0.0.5", "port": 11434 }
+  },
+  "models": {
+    "gpt-oss:latest": {
+      "contextLength": 65536,
+      "maxTokens": 16384,
+      "thinkingLevel": "low",
+      "keepAlive": "30m",
+      "warm": true,
+      "sampling": { "temperature": 0.7, "topP": 0.95, "topK": 40 },
+      "gpu": { "numGpu": 99, "mainGpu": 0 },
+      "request": { "maxRetries": 2, "logprobs": false },
+      "server": "remote"
+    }
+  }
+}
+```
+
+Precedence per key: model entry, `defaults`, the same key at the top level, the environment variable, the built-in default. `sampling`, `gpu` and `request` merge key by key. A temperature pi sends for a turn wins over `sampling.temperature`.
+
+| Key | Values | Default |
+|---|---|---|
+| `contextLength` | `num_ctx`, integer ≥ 256 | model's window, capped at 32,768 |
+| `maxTokens` | output limit registered with pi | discovered |
+| `thinkingLevel` | pi level set when the model is selected (`off`, `low`, `high`, …) | pi's setting |
+| `keepAlive` | duration (`"30m"`) or seconds (`-1` = forever) | not sent |
+| `warm` | [warm-up](#warm-up) on/off | `true` |
+| `sampling` | `temperature`, `topP`, `topK`, `minP`, `typicalP`, `repeatPenalty`, `repeatLastN`, `presencePenalty`, `frequencyPenalty`, `seed`, `numKeep`, `stop` (sent as Ollama's snake_case options) | not sent |
+| `gpu` | `numGpu` (offloaded layers, `-1` = Ollama decides), `mainGpu`, `numBatch`, `numThread`, `useMmap` | not sent |
+| `request` | `idleTimeoutMs`: abort when no chunk arrives for this long (`0` = off); `maxRetries` (0-10): retries when nothing arrived at all; `logprobs`: request per-token log-probabilities | `240000`, `2`, `false` |
+| `server` | name from `servers` to send this model's requests to (`OLLAMA_API_KEY` is never sent there) | `OLLAMA_HOST` |
+| `servers` (top level) | `{ "<name>": { "host": "...", "port": 11434 } }`; `host` may include `http(s)://`, `port` defaults to 11434 | none |
+
+Invalid values are shown as errors in pi and ignored; unknown keys are warnings. Keys starting with `_` are comments.
 
 ---
 
@@ -336,7 +385,6 @@ No build step - pi loads the TypeScript source directly. Both commands should pa
 ## Limitations / not yet implemented
 
 - **Ollama Cloud (`https://ollama.com`) directly.** Not tested. `OLLAMA_API_KEY` may be enough for it, but this extension is built and tested for local and self-hosted Ollama. A local Ollama signed in with `ollama signin` already serves `:cloud` models without a key. For cloud-only use, see [`fgrehm/pi-ollama-cloud`](https://github.com/fgrehm/pi-ollama-cloud).
-- **Per-model `temperature` / `top_p` defaults.** Sampling parameters are passed through from pi's options when set, but there's no extension-level config for default values per model. Open an issue if you need this.
 - **Auto-pull.** If you select a model that isn't pulled, you'll get an error from Ollama. The extension doesn't offer to `ollama pull` it for you.
 
 ---
