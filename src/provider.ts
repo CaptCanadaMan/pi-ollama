@@ -18,7 +18,7 @@
 
 import { dbg, dumpRequest, dumpResponseLine } from "./debug.js";
 import { convertContext, type PiContext } from "./convert.js";
-import { describeOllamaError } from "./errors.js";
+import { describeEmptyGeneration, describeOllamaError } from "./errors.js";
 import { openChat, targetFor } from "./ollama-client.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
@@ -437,10 +437,11 @@ export function streamOllama(
 					ghostAttempts++;
 					if (ghostAttempts > maxRetries) {
 						throw new Error(
-							`Ollama returned ghost tokens (${firstChunk.eval_count} evaluated, none streamed) ` +
-								`after ${maxRetries + 1} attempt(s). This is an Ollama-side reliability issue: ` +
-								`tokens are generated internally but the streamed response contains no content, ` +
-								`thinking, or tool calls. Set OLLAMA_NATIVE_GHOST_RETRIES=N to increase tolerance.`,
+							describeEmptyGeneration({
+								evalCount: firstChunk.eval_count ?? 0,
+								attempts: ghostAttempts,
+								toolsOffered: (body.tools?.length ?? 0) > 0,
+							}),
 						);
 					}
 					continue;
@@ -732,9 +733,12 @@ export function streamOllama(
 			if (outputTokens > 0 && !hasMeaningfulContent) {
 				dbg("ghost-tokens", { evalCount: outputTokens, chunksReceived });
 				throw new Error(
-					`Ollama generated ${outputTokens} output tokens but streamed no visible content, ` +
-						`thinking, or tool calls. This is usually caused by a malformed tool call that ` +
-						`Ollama's parser silently swallowed. Retry the request or rephrase.`,
+					describeEmptyGeneration({
+						evalCount: outputTokens,
+						// Any earlier attempts were empty too (the ghost retries).
+						attempts: ghostAttempts + 1,
+						toolsOffered: (body.tools?.length ?? 0) > 0,
+					}),
 				);
 			}
 

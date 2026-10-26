@@ -256,6 +256,8 @@ Ollama's streaming has a few known edge cases. The provider handles them explici
 
 **Post-stream ghost check.** Belt-and-suspenders: if `eval_count > 0` but no content, thinking, or tool calls landed in the parsed stream, the provider raises an error rather than reporting a successful empty turn.
 
+When tools were on offer, an empty generation is usually not a glitch at all. The model wrote a tool call that Ollama couldn't parse, and Ollama dropped it without sending anything. The error says so, and Ollama's server log (`~/.ollama/logs/server.log` on macOS, `journalctl -u ollama` on Linux) shows the model's exact text next to `tool call parsing failed`. If the same call fails every time, retrying won't help: look at that tool's parameters. A free-form object argument, for example, reaches Gemma 4 as an object with no fields, and the model tends to invent one.
+
 **Swallowed-tool-call detection.** Ollama can buffer a tool call server-side, fail to parse it, and end the turn with no `tool_calls` on the wire - the model announces an action and then nothing happens (issue #3). The guard detects the generated≫streamed token gap and raises a retryable error instead of completing silently. It stands down on batched streams (Ollama Cloud emits ~30 tokens per NDJSON chunk vs ~1 locally), which previously false-positived the ratio heuristic on healthy cloud turns (issue #4).
 
 **Readable errors.** When Ollama refuses a request, the error says what Ollama said, not just the HTTP status: a missing model, a rejected key, a context overflow.

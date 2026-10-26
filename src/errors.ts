@@ -92,6 +92,32 @@ export function describeOllamaError(raw: string, ctx: OllamaErrorContext): strin
 		: `Ollama returned error: ${detail}`;
 }
 
+export interface EmptyGeneration {
+	/** Tokens Ollama reports generating (eval_count). */
+	evalCount: number;
+	/** How many requests came back this way, retries included. */
+	attempts: number;
+	/** Whether the request offered the model any tools. */
+	toolsOffered: boolean;
+}
+
+/**
+ * Ollama counted generated tokens but sent back nothing. With tools on offer
+ * that is almost always a tool call its parser couldn't read: Ollama logs
+ * "tool call parsing failed" with the model's text and emits nothing at all.
+ */
+export function describeEmptyGeneration(g: EmptyGeneration): string {
+	const what = `Ollama generated ${g.evalCount} tokens but returned nothing (${g.attempts} attempt(s)).`;
+	if (g.toolsOffered) {
+		return (
+			`${what} This is most likely a tool call Ollama couldn't parse and dropped - ` +
+			`Ollama's server log shows the model's text next to "tool call parsing failed". ` +
+			`If it keeps happening, the model is probably confused by one of the tool's arguments.`
+		);
+	}
+	return `${what} Set OLLAMA_NATIVE_GHOST_RETRIES=N to retry more times.`;
+}
+
 /** An error's message without the "Error:" prefix String() would add. */
 export function errorText(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
