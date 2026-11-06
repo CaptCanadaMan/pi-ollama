@@ -22,8 +22,16 @@
 //   OLLAMA_NATIVE_GHOST_RETRIES  - Ghost-token retry count. Default: 2
 //   OLLAMA_NATIVE_THROUGHPUT     - tok/s telemetry. On by default; 0 switches it off
 
-import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
-import { discoverModels, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";
+import { loadSettings, type OllamaExtensionSettings, reloadModelConfig } from "./settings.js";
+import {
+	discoverModels,
+	discoverPinned,
+	fallbackModels,
+	loadCache,
+	mergePinned,
+	saveCache,
+	type DiscoveredModel,
+} from "./discovery.js";
 import { streamOllama } from "./provider.js";
 import { registerApiKeyApproval } from "./api-key-approval.js";
 import { createOllamaLauncher, registerAutostart } from "./autostart.js";
@@ -31,7 +39,8 @@ import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
 import { registerThroughputStatus, type StatusPi } from "./status.js";
 import { GenerationTelemetry } from "./telemetry.js";
-import { toThinkingLevelMap, type ThinkingLevelMap } from "./thinking.js";
+import { supportedLevels, toThinkingLevelMap, type ThinkingLevelMap } from "./thinking.js";
+import { checkAgainstModels, registerConfigReporting, resolveModelConfig } from "./model-config.js";
 import { createReadySignal, registerWarmup } from "./warm.js";
 
 // ============================================================================
@@ -56,6 +65,14 @@ interface ProviderModel {
 	};
 }
 
+/** The slice of pi's model the thinkingLevel handler reads (model-config.ts). */
+interface ThinkingModel {
+	id: string;
+	api?: string;
+	reasoning?: boolean;
+	thinkingLevelMap?: ThinkingLevelMap;
+}
+
 interface ExtensionAPI extends StatusPi {
 	// pi hands every event handler the full context; each module declares only
 	// the slice it uses, so this accepts any of their handler shapes.
@@ -75,6 +92,9 @@ interface ExtensionAPI extends StatusPi {
 		},
 	): void;
 	unregisterProvider(name: string): void;
+	// Optional: older pi versions lack them, and the per-model thinkingLevel is then skipped.
+	setThinkingLevel?(level: string): void;
+	getThinkingLevel?(): string;
 	registerCommand(
 		name: string,
 		config: {
@@ -177,7 +197,34 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	let models: DiscoveredModel[] = [];
 	const ready = createReadySignal();
 	const refreshModels = async (): Promise<DiscoveredModel[]> => {
-		const fresh = await discoverModels(settings);
+		// Re-read the config first so /ollama-refresh applies edits (model-config.ts).
+		const loadIssues = reloadModelConfig(settings);
+		let discovered: DiscoveredModel[];
+		try {
+			discovered = await discoverModels(settings);
+		} catch (e) {
+			// Default server down: register its cached models plus a fresh
+			// lookup of pinned ones (their servers may be up), then rethrow so
+			// callers still see the failure (autostart, /ollama-refresh).
+			const fallback = await fallbackModels(settings.modelConfig, loadCache());
+			settings.configIssues = [...loadIssues, ...fallback.issues];
+			models = fallback.models;
+			registerProvider(models);
+			throw e;
+		}
+		const pinned = await discoverPinned(settings.modelConfig, loadCache());
+		const fresh = mergePinned(discovered, pinned.models);
+		settings.configIssues = [
+			...loadIssues,
+			...pinned.issues,
+			...checkAgainstModels(
+				settings.modelConfig,
+				fresh.map((m) => ({
+					id: m.id,
+					supportedLevels: supportedLevels(m.reasoning, toThinkingLevelMap(m.thinking)),
+				})),
+			),
+		];
 		saveCache(fresh);
 		models = fresh;
 		registerProvider(fresh);
@@ -194,8 +241,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		await refreshModels();
 	} catch (e) {
 		startupFailure = e;
-		models = loadCache();
-		registerProvider(models);
+		// refreshModels() already registered the fallback list: cached models plus
+		// pinned servers looked up fresh (model-config.ts).
 		process.stderr.write(
 			models.length > 0
 				? `[pi-ollama] Ollama not reachable (${String(e)}). ` +
@@ -213,6 +260,26 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	});
 	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
 	registerWarmup(pi, settings, { whenReady: ready.whenReady });
+
+	// Config problems (model-config.ts): shown in pi at startup, errors in red.
+	registerConfigReporting(pi, () => settings.configIssues);
+
+	// Per-model thinkingLevel (model-config.ts): set pi's own level when an
+	// ollama-native model is selected, so pi's picker shows the real value and
+	// the user can still change it. Skipped when the model doesn't support
+	// that level (checkAgainstModels reports it) or pi is already there.
+	const applyThinkingLevel = (model: ThinkingModel | undefined) => {
+		if (!model || model.api !== "ollama-native" || !pi.setThinkingLevel) return;
+		const level = resolveModelConfig(settings.modelConfig, settings, model.id).thinkingLevel;
+		if (!level) return;
+		if (!supportedLevels(Boolean(model.reasoning), model.thinkingLevelMap).includes(level)) return;
+		if (pi.getThinkingLevel?.() === level) return;
+		pi.setThinkingLevel(level);
+	};
+	pi.on?.("model_select", (event: { model?: ThinkingModel }) => applyThinkingLevel(event.model));
+	pi.on?.("session_start", (event: { reason?: string }, ctx: { model?: ThinkingModel }) => {
+		if (event.reason === "startup" || event.reason === "new") applyThinkingLevel(ctx.model);
+	});
 }
 
 // ============================================================================
@@ -228,8 +295,11 @@ function toProviderModel(
 	// both views stay consistent. Resolution:
 	//   1. settings.contextLength — user override (slash command or env var)
 	//   2. min(discovered window, settings.numCtx) — capped default
+	// Per-model config (model-config.ts): models[id] > defaults > top level /
+	// env (settings.contextLength) > the capped default.
+	const resolved = resolveModelConfig(settings.modelConfig, settings, m.id);
 	const effectiveContextWindow =
-		settings.contextLength ?? Math.min(m.contextWindow, settings.numCtx);
+		resolved.contextLength ?? Math.min(m.contextWindow, settings.numCtx);
 	// The model's own thinking values drive pi's level picker and the `think`
 	// value on the wire (gh#13). Absent = legacy on/off for every level.
 	const thinkingLevelMap = toThinkingLevelMap(m.thinking);
@@ -237,13 +307,13 @@ function toProviderModel(
 		id: m.id,
 		name: m.name,
 		api: "ollama-native",
-		baseUrl: settings.baseUrl,
+		baseUrl: m.baseUrl ?? settings.baseUrl,
 		reasoning: m.reasoning,
 		...(thinkingLevelMap && { thinkingLevelMap }),
 		input: m.vision ? ["text", "image"] : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: effectiveContextWindow,
-		maxTokens: m.maxTokens,
+		maxTokens: resolved.maxTokens ?? m.maxTokens,
 		compat: {
 			supportsDeveloperRole: false,
 			supportsReasoningEffort: false,

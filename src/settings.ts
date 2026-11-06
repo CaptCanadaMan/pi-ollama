@@ -20,7 +20,8 @@
 //                                Superseded by /ollama-warm-up's saved choice.
 
 import { createHash } from "node:crypto";
-import { type ApiKeyApproval, loadPersistedConfig } from "./config.js";
+import { type ApiKeyApproval, loadPersistedConfig, persistedConfigError } from "./config.js";
+import { type ConfigIssue, loadModelConfig, type ModelConfigFile } from "./model-config.js";
 
 export interface OllamaExtensionSettings {
 	/** Base URL of the Ollama server, e.g. http://localhost:11434 */
@@ -50,6 +51,10 @@ export interface OllamaExtensionSettings {
 	 * config file so changes survive restart.
 	 */
 	contextLength?: number;
+	/** The validated config file: defaults, top level, models, servers (model-config.ts). */
+	modelConfig: ModelConfigFile;
+	/** Problems found in the config file, shown in pi at startup and on /ollama-refresh. */
+	configIssues: ConfigIssue[];
 	/** tok/s telemetry (status + session records). Default: true. */
 	throughput: boolean;
 	/** Load the model at session start / model switch (OLLAMA_NATIVE_WARM). Default: true. */
@@ -153,7 +158,17 @@ export function loadSettings(): OllamaExtensionSettings {
 	// contextLength + keepAlive resolution: persisted (slash-command set) wins
 	// over env var.
 	const persisted = loadPersistedConfig();
-	const persistedContextLength = persisted.contextLength;
+	// Validate everything the file holds before trusting any of it (model-config.ts).
+	const loaded = loadModelConfig(persisted);
+	const readError = persistedConfigError();
+	if (readError) {
+		loaded.issues.unshift({
+			severity: "error",
+			path: "pi-ollama-config.json",
+			message: `couldn't be read (${readError}) - using built-in defaults`,
+		});
+	}
+	const persistedContextLength = loaded.config.topLevel.contextLength;
 	const envContextLength = (() => {
 		const raw = process.env.OLLAMA_CONTEXT_LENGTH;
 		if (!raw) return undefined;
@@ -164,12 +179,29 @@ export function loadSettings(): OllamaExtensionSettings {
 
 	return {
 		baseUrl,
-		keepAlive: resolveKeepAlive(persisted.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
+		keepAlive: resolveKeepAlive(loaded.config.topLevel.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
 		numCtx: 32768,
 		ghostRetries,
 		contextLength,
 		throughput: resolveEnabledFlag(process.env.OLLAMA_NATIVE_THROUGHPUT),
-		warm: persisted.warm ?? resolveEnabledFlag(process.env.OLLAMA_NATIVE_WARM),
+		warm: loaded.config.topLevel.warm ?? resolveEnabledFlag(process.env.OLLAMA_NATIVE_WARM),
+		modelConfig: loaded.config,
+		configIssues: loaded.issues,
 		...resolveApiKey(process.env.OLLAMA_API_KEY, baseUrl, persisted.apiKeyApproval),
 	};
+}
+
+/**
+ * Re-read the config file into an existing settings object (model-config.ts).
+ * Used by /ollama-refresh and by the slash commands that write the file.
+ * Returns the problems found this time.
+ */
+export function reloadModelConfig(settings: OllamaExtensionSettings): ConfigIssue[] {
+	const fresh = loadSettings();
+	settings.contextLength = fresh.contextLength;
+	settings.keepAlive = fresh.keepAlive;
+	settings.warm = fresh.warm;
+	settings.modelConfig = fresh.modelConfig;
+	settings.configIssues = fresh.configIssues;
+	return fresh.configIssues;
 }

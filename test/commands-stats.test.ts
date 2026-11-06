@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { registerCommands } from "../src/commands.js";
 import { GENERATION_ENTRY_TYPE } from "../src/stats.js";
+import { emptyModelConfig } from "../src/model-config.js";
 
 type Handler = (args: string, ctx: unknown) => void | Promise<void>;
 
@@ -13,6 +14,8 @@ function registered(throughput: boolean) {
 	const settings = {
 		baseUrl: "http://ollama.test",
 		numCtx: 32768,
+		modelConfig: emptyModelConfig(),
+		configIssues: [],
 		ghostRetries: 2,
 		throughput,
 	};
