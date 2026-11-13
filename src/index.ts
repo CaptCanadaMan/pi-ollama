@@ -219,17 +219,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 // Model shape conversion
 // ============================================================================
 
-function toProviderModel(
+export function toProviderModel(
 	m: DiscoveredModel,
 	settings: OllamaExtensionSettings,
 ): ProviderModel {
 	// The registered contextWindow drives both the wire request (num_ctx) AND
 	// pi's UI context-usage counter. Compute the effective value once here so
 	// both views stay consistent. Resolution:
-	//   1. settings.contextLength — user override (slash command or env var)
-	//   2. min(discovered window, settings.numCtx) — capped default
-	const effectiveContextWindow =
-		settings.contextLength ?? Math.min(m.contextWindow, settings.numCtx);
+	// Use the saved preference (or default cap), bounded by this model's
+	// discovered maximum. Keep the preference unchanged for model switches.
+	const effectiveContextWindow = Math.min(
+		m.contextWindow,
+		settings.contextLength ?? settings.numCtx,
+	);
 	// The model's own thinking values drive pi's level picker and the `think`
 	// value on the wire (gh#13). Absent = legacy on/off for every level.
 	const thinkingLevelMap = toThinkingLevelMap(m.thinking);
