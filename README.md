@@ -48,7 +48,21 @@ Requires Ollama running locally (default `http://localhost:11434`) and at least 
 pi --no-extensions -e /absolute/path/to/pi-ollama/src/index.ts
 ```
 
-**Using an Ollama on another machine.** Set `OLLAMA_HOST` before starting pi. The protocol is optional:
+**Using an Ollama on another machine.** Set `ollama.baseUrl` in your user-level `~/.pi/agent/settings.json` (merge with any existing settings):
+
+```json
+{
+  "ollama": {
+    "baseUrl": "http://ollama.home:11434"
+  }
+}
+```
+
+Host precedence is `OLLAMA_HOST` → user settings `ollama.baseUrl` → `localhost:11434`. When `PI_CODING_AGENT_DIR` is set, its `settings.json` is used instead. Project-local settings are intentionally not read, so opening a repository cannot redirect requests to a different server. Reload pi after changing the settings file.
+
+Bare `host:port` values are accepted. Trailing `/v1` or `/api` suffixes are removed for native API requests, while reverse-proxy path prefixes are preserved. Invalid JSON or unreadable settings produce an error instead of silently selecting another server; a missing file uses the default. API-key approval still applies to the resolved host.
+
+Alternatively, set `OLLAMA_HOST` before starting pi to override the file. The protocol is optional:
 
 ```bash
 OLLAMA_HOST=192.168.1.20:11434 pi
@@ -120,7 +134,7 @@ Switch to one of the discovered models and use pi normally.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OLLAMA_HOST` | `localhost:11434` | Ollama server host[:port]. May include or omit protocol. |
+| `OLLAMA_HOST` | `ollama.baseUrl` from user settings, or `localhost:11434` | Ollama server host[:port]. Overrides the settings file. May include or omit protocol. |
 | `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` if used. |
 | `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** - a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by `/ollama-keep-alive` if used. |
 | `OLLAMA_API_KEY` | unset | Bearer token for an Ollama behind a token-checking proxy. Only sent to `OLLAMA_HOST`, and only after you approve it (see [Using a remote Ollama with an API key](#using-a-remote-ollama-with-an-api-key)). |
