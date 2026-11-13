@@ -20,6 +20,7 @@
 //                                Superseded by /ollama-warm-up's saved choice.
 
 import { createHash } from "node:crypto";
+import { resolveHost } from "./host-settings.js";
 import { type ApiKeyApproval, loadPersistedConfig } from "./config.js";
 
 export interface OllamaExtensionSettings {
@@ -136,12 +137,8 @@ export function resolveApiKey(
 }
 
 export function loadSettings(): OllamaExtensionSettings {
-	// OLLAMA_HOST may be bare "host:port" or already include a protocol.
-	const rawHost = process.env.OLLAMA_HOST ?? "localhost:11434";
-	const baseUrl = (rawHost.startsWith("http") ? rawHost : `http://${rawHost}`).replace(
-		/\/+$/,
-		"",
-	);
+	// Environment override > user Pi settings ollama.baseUrl > localhost.
+	const baseUrl = resolveHost();
 
 	const rawRetries = process.env.OLLAMA_NATIVE_GHOST_RETRIES;
 	const ghostRetries = (() => {
