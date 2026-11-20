@@ -16,6 +16,11 @@ const gemma: DiscoveredModel = {
 	maxTokens: 8192,
 };
 
+// The status rows format context sizes in the host's locale ("262,144" in
+// en-US, "262 144" in en-ZA), so build the expected text the same way (GH-14).
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const gemmaRow = `gemma4:26b\\s+ctx:${escapeRegExp((262144).toLocaleString())}\\s+\\[tools, vision, reasoning\\]`;
+
 /** Run one command with typed args; resolve with its single notification. */
 function command(name: string, models: DiscoveredModel[], ui: object = {}, overrides = {}) {
 	const handlers = new Map<string, Handler>();
@@ -68,7 +73,7 @@ describe("/ollama-status", () => {
 
 		expect(level).toBe("info");
 		expect(text).toContain("1 model(s) registered");
-		expect(text).toMatch(/gemma4:26b\s+ctx:262,144\s+\[tools, vision, reasoning\]/);
+		expect(text).toMatch(new RegExp(gemmaRow));
 		expect(text).toContain("gemma4:26b (18.0 GB VRAM)");
 	});
 
@@ -188,7 +193,7 @@ describe("/ollama-info <model>", () => {
 
 		const offered = select.mock.calls[0]![1];
 		expect(offered).toHaveLength(1);
-		expect(offered[0]).toMatch(/^gemma4:26b\s+ctx:262,144\s+\[tools, vision, reasoning\]$/);
+		expect(offered[0]).toMatch(new RegExp(`^${gemmaRow}$`));
 		expect(text.startsWith("gemma4:26b\n")).toBe(true);
 	});
 

@@ -499,7 +499,7 @@ Thanks to [@TRex22](https://github.com/TRex22) for the feature request (#10).
 
 ## Compatibility
 
-- **pi**: Tested against `@earendil-works/pi-coding-agent` v0.87.x, and works back to v0.75.5. pi 0.86 moved the system prompt and tool declarations out of the request context and into the conversation transcript (gh#11); pi-ollama reads both shapes, so older versions keep working. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`). The footer displays, session records, startup prompts and warm-up use `pi.on`, `ctx.ui.setStatus`, `ctx.ui.select` and `pi.appendEntry`; on a pi without them those parts quietly do nothing. On a pi that can't report its system prompt, warm-up loads the model weights only.
+- **pi**: Tested against `@earendil-works/pi-coding-agent` v1.6.0. Earlier versions were last tested with pi-ollama 0.2.0 (pi 0.87.x, and working back to 0.75.5); this release has not been run on them, though nothing in it is known to need a newer pi. pi 0.86 moved the system prompt and tool declarations out of the request context and into the conversation transcript (gh#11); pi-ollama reads both shapes, so older versions keep working. Should work with any version exposing the standard `ExtensionAPI` (`registerProvider` with `streamSimple`, `registerCommand` with `ctx.ui.notify`). The footer displays, session records, startup prompts and warm-up use `pi.on`, `ctx.ui.setStatus`, `ctx.ui.select` and `pi.appendEntry`; on a pi without them those parts quietly do nothing. On a pi that can't report its system prompt, warm-up loads the model weights only.
 - **Ollama**: Requires Ollama with `/api/chat` support (most versions). Overflow handling needs 0.12.5+, and per-model thinking levels need 0.34+. `/api/ps` is used opportunistically and tolerates older versions that don't expose it.
 - **Starting Ollama**: macOS needs the Ollama app installed; Linux needs the `ollama` binary. Other platforms don't get the offer.
 - **Node**: Requires Node 22.19+.
@@ -531,7 +531,7 @@ No build step - pi loads the TypeScript source directly. Both commands should pa
 ## Limitations / not yet implemented
 
 - **Ollama Cloud (`https://ollama.com`) directly.** Not tested. `OLLAMA_API_KEY` may be enough for it, but this extension is built and tested for local and self-hosted Ollama. A local Ollama signed in with `ollama signin` already serves `:cloud` models without a key. For cloud-only use, see [`fgrehm/pi-ollama-cloud`](https://github.com/fgrehm/pi-ollama-cloud).
-- **Per-model `temperature` / `top_p` defaults.** Sampling parameters are passed through from pi's options when set, but there's no extension-level config for default values per model. Open an issue if you need this.
+- **Per-model `temperature` / `top_p` defaults.** Not configured here. Sampling parameters are passed through from pi when it sets them; for a per-model default, put `PARAMETER` lines in an Ollama Modelfile, which pi-ollama leaves alone.
 - **Auto-pull.** If you select a model that isn't pulled, you'll get an error from Ollama. The extension doesn't offer to `ollama pull` it for you.
 
 ---

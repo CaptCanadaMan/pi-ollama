@@ -14,6 +14,7 @@
     "test": "vitest run"
   },
   "keywords": [
+    "pi-package",
     "pi",
     "ollama",
     "llm",
