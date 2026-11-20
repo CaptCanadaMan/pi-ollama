@@ -40,6 +40,8 @@ export interface PersistedConfig {
 	autostart?: "always" | "never";
 	/** Warm-up on/off set via /ollama-warm-up. Absent = OLLAMA_NATIVE_WARM, else on. */
 	warm?: boolean;
+	/** Per-model settings, keyed by exact model id. Hand-edited; validated by model-config.ts. */
+	models?: unknown;
 }
 
 export function loadPersistedConfig(): PersistedConfig {

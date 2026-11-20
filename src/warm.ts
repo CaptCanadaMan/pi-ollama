@@ -14,6 +14,7 @@ import { errorText } from "./errors.js";
 import { loadModel, targetFor } from "./ollama-client.js";
 import { buildChatRequestBody, buildTurnRequest, type PiModel, requestOptions } from "./provider.js";
 import type { OllamaExtensionSettings } from "./settings.js";
+import { resolveModelSettings } from "./model-config.js";
 import { setFooterStatus, type StatusContext } from "./status.js";
 
 type WarmModel = PiModel;
@@ -110,7 +111,7 @@ export function registerWarmup(
 				modelId: model.id,
 				messages: [],
 				options: requestOptions(model, settings),
-				keepAlive: settings.keepAlive,
+				keepAlive: resolveModelSettings(settings.modelConfig, settings, model.id).keepAlive,
 				reasoningCapable: false,
 				reasoningLevel: undefined,
 				thinkingLevelMap: undefined,
@@ -152,9 +153,11 @@ export function registerWarmup(
 		}
 	};
 
-	// settings.warm is checked here, per request, so /ollama-warm-up takes effect at once.
+	// Resolved here, per request, so /ollama-warm-up takes effect at once. A
+	// model's own `warm` in the config file wins over the global switch.
 	const request = (model: WarmModel | undefined, ctx: WarmContext) => {
-		if (settings.warm && model?.api === "ollama-native") void warm(model, ctx);
+		if (model?.api !== "ollama-native") return;
+		if (resolveModelSettings(settings.modelConfig, settings, model.id).warm) void warm(model, ctx);
 	};
 	pi.on?.("session_start", (_event, ctx) => request(ctx.model, ctx));
 	pi.on?.("model_select", (event, ctx) => request(event.model, ctx));

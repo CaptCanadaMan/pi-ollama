@@ -11,6 +11,7 @@ vi.mock("../src/config.js", () => ({
 }));
 
 const { createReadySignal, registerWarmup } = await import("../src/warm.js");
+import { loadModelConfig } from "../src/model-config.js";
 import type { OllamaRequest } from "../src/wire.js";
 import { doneChunk, ndjsonResponse, runStream, settings, textChunk } from "./fixtures.js";
 
@@ -102,6 +103,36 @@ describe("warming the model", () => {
 
 		expect(bodies[0]!.keep_alive).toBe("30m");
 		expect("keep_alive" in bodies[1]!).toBe(false);
+	});
+
+	it("follows a model's own warm and keep_alive settings from the config file", async () => {
+		const { bodies } = stubOllama();
+		const { config: modelConfig } = loadModelConfig({
+			models: {
+				"gemma4:26b": { warm: false },
+				"gemma4:e4b": { keepAlive: -1 },
+			},
+		});
+		const { sessionStart, selectModel } = setup(undefined, { modelConfig });
+
+		sessionStart(gemma);
+		selectModel(e4b);
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
+
+		expect(bodies[0]!.model).toBe("gemma4:e4b");
+		expect(bodies[0]!.keep_alive).toBe(-1);
+	});
+
+	it("warms a model the config file switches on while warm-up is off globally", async () => {
+		const { bodies } = stubOllama();
+		const { config: modelConfig } = loadModelConfig({ models: { "gemma4:e4b": { warm: true } } });
+		const { sessionStart, selectModel } = setup(undefined, { warm: false, modelConfig });
+
+		sessionStart(gemma);
+		selectModel(e4b);
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
+
+		expect(bodies[0]!.model).toBe("gemma4:e4b");
 	});
 
 	it("waits until Ollama is up before sending anything", async () => {

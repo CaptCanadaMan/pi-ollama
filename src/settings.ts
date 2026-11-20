@@ -21,6 +21,7 @@
 
 import { createHash } from "node:crypto";
 import { type ApiKeyApproval, loadPersistedConfig } from "./config.js";
+import { type ConfigIssue, loadModelConfig, type ModelConfigFile } from "./model-config.js";
 
 export interface OllamaExtensionSettings {
 	/** Base URL of the Ollama server, e.g. http://localhost:11434 */
@@ -54,6 +55,14 @@ export interface OllamaExtensionSettings {
 	throughput: boolean;
 	/** Load the model at session start / model switch (OLLAMA_NATIVE_WARM). Default: true. */
 	warm: boolean;
+	/**
+	 * Per-model settings from the config file's `models` block (model-config.ts).
+	 * A model's own keepAlive / warm wins over the global ones above; read them
+	 * through resolveModelSettings, never directly.
+	 */
+	modelConfig?: ModelConfigFile;
+	/** Problems found in the `models` block, shown in pi at startup. */
+	configIssues?: ConfigIssue[];
 	/**
 	 * The API key sent as a bearer token to the configured Ollama. Present
 	 * only once the key in OLLAMA_API_KEY is approved for this host.
@@ -161,8 +170,11 @@ export function loadSettings(): OllamaExtensionSettings {
 		return Number.isFinite(n) && n > 0 ? n : undefined;
 	})();
 	const contextLength = persistedContextLength ?? envContextLength;
+	const { config: modelConfig, issues: configIssues } = loadModelConfig(persisted);
 
 	return {
+		modelConfig,
+		configIssues,
 		baseUrl,
 		keepAlive: resolveKeepAlive(persisted.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
 		numCtx: 32768,

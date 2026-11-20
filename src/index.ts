@@ -26,6 +26,7 @@ import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
 import { discoverModels, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";
 import { streamOllama } from "./provider.js";
 import { registerApiKeyApproval } from "./api-key-approval.js";
+import { registerConfigReporting } from "./config-report.js";
 import { createOllamaLauncher, registerAutostart } from "./autostart.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
@@ -213,6 +214,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	});
 	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
 	registerWarmup(pi, settings, { whenReady: ready.whenReady });
+	registerConfigReporting(pi, () => settings.configIssues ?? []);
 }
 
 // ============================================================================

@@ -46,6 +46,21 @@ describe("loadSettings - the API key at startup", () => {
 	});
 });
 
+describe("loadSettings - per-model settings from the config file", () => {
+	it("loads the models block and reports what it had to drop", () => {
+		persisted.models = { "gemma4:12b": { keepAlive: -1, warm: "yes" } };
+
+		const settings = loadSettings();
+
+		expect(settings.modelConfig?.models["gemma4:12b"]).toEqual({ keepAlive: -1 });
+		expect(settings.configIssues?.map((i) => i.path)).toEqual(['models["gemma4:12b"].warm']);
+	});
+
+	it("has nothing to report for a file without one", () => {
+		expect(loadSettings().configIssues).toEqual([]);
+	});
+});
+
 describe("loadSettings - the warm-up switch", () => {
 	it("warms by default and switches off with OLLAMA_NATIVE_WARM=0", () => {
 		expect(loadSettings().warm).toBe(true);

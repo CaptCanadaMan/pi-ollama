@@ -22,6 +22,7 @@ import { describeEmptyGeneration, describeOllamaError } from "./errors.js";
 import { openChat, targetFor } from "./ollama-client.js";
 import type { OllamaChunk, OllamaRequest } from "./wire.js";
 import type { OllamaExtensionSettings } from "./settings.js";
+import { resolveModelSettings } from "./model-config.js";
 import type { TelemetrySink } from "./telemetry.js";
 import { parseGenerationMetrics } from "./throughput.js";
 import { resolveThink, type ThinkingLevelMap } from "./thinking.js";
@@ -260,7 +261,7 @@ export function buildTurnRequest(
 		modelId: model.id,
 		messages,
 		options: requestOptions(model, settings, options),
-		keepAlive: settings.keepAlive,
+		keepAlive: resolveModelSettings(settings.modelConfig, settings, model.id).keepAlive,
 		reasoningCapable: Boolean(model.reasoning),
 		reasoningLevel: options?.reasoning,
 		thinkingLevelMap: model.thinkingLevelMap,
