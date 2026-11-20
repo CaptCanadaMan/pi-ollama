@@ -25,6 +25,8 @@ export interface InferredCapabilities {
 	/** Validated thinking values, or undefined when the server reports none. */
 	thinking: OllamaThinking | undefined;
 	contextWindow: number;
+	/** True when the model reported its context length; false when 32768 is a placeholder. */
+	contextWindowKnown: boolean;
 	maxTokens: number;
 }
 
@@ -85,10 +87,12 @@ export function inferCapabilities(
 		? fromCapabilities(show.capabilities, thinking)
 		: fromHeuristics(modelId, show, thinking);
 
+	const reportedContextWindow = extractContextWindow(show.model_info);
 	return {
 		...flags,
 		thinking,
-		contextWindow: extractContextWindow(show.model_info) ?? 32768,
+		contextWindow: reportedContextWindow ?? 32768,
+		contextWindowKnown: reportedContextWindow !== null,
 		maxTokens: 8192,
 	};
 }

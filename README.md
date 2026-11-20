@@ -147,6 +147,8 @@ By default it's the model's trained context window, capped at 32,768 tokens. Som
 
 To change it, run `/ollama-context` and pick a preset or enter your own number. It applies from the next request and is saved across pi launches. To go back to the default, pick "Use system default" in the same picker. You can also set `OLLAMA_CONTEXT_LENGTH` in the environment, which works the same way for Ollama itself; a value chosen in `/ollama-context` takes priority over it.
 
+A size larger than a model's own maximum is brought down to that maximum for that model only, so the footer still matches what Ollama allocates. Your saved number is kept, and a model with more room gets all of it when you switch. If Ollama didn't report a maximum for a model, your number is used as it is.
+
 A bigger window holds more of the conversation but uses more memory, and a model that doesn't fit in memory will fail to load. If you hit that, step the size down. Changing the size makes Ollama reload the model on the next request.
 
 ---

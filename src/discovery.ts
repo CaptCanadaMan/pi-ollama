@@ -27,6 +27,13 @@ export interface DiscoveredModel {
 	/** The model's `think` values (gh#13). Absent on older Ollama and in older caches. */
 	thinking?: OllamaThinking;
 	contextWindow: number;
+	/**
+	 * True when the model itself reported `contextWindow`. Absent or false means
+	 * it is a placeholder (/api/show failed or gave no context length, or the
+	 * entry comes from a cache written before this field existed), which must
+	 * not be used to cap what the user asked for (GH-15).
+	 */
+	contextWindowKnown?: boolean;
 	maxTokens: number;
 }
 
@@ -88,6 +95,7 @@ async function describeModel(
 			reasoning: caps.reasoning,
 			...(caps.thinking && { thinking: caps.thinking }),
 			contextWindow: caps.contextWindow,
+			contextWindowKnown: caps.contextWindowKnown,
 			maxTokens: caps.maxTokens,
 		};
 	} catch {

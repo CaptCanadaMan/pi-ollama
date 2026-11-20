@@ -56,6 +56,17 @@ describe("inferCapabilities - Ollama's capabilities array wins over name guesses
 		expect(listed).toMatchObject({ vision: true, tools: true, reasoning: true });
 	});
 
+	it("says whether the context window came from the model or is a placeholder", () => {
+		const reported = inferCapabilities("gemma4:26b", {
+			model_info: { "gemma4.context_length": 262144 },
+		});
+		expect(reported).toMatchObject({ contextWindow: 262144, contextWindowKnown: true });
+		expect(inferCapabilities("plain:7b", {})).toMatchObject({
+			contextWindow: 32768,
+			contextWindowKnown: false,
+		});
+	});
+
 	it("falls back to name and family guesses when Ollama reports no array", () => {
 		const caps = inferCapabilities("deepseek-r1:8b", {
 			details: { family: "qwen", families: ["qwen", "clip"] },

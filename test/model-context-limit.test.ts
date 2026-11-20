@@ -9,7 +9,13 @@ const settings: OllamaExtensionSettings = {
 };
 const model = (contextWindow: number): DiscoveredModel => ({
  id: "test", name: "test", tools: true, vision: false, reasoning: false,
- contextWindow, maxTokens: 8192,
+ contextWindow, contextWindowKnown: true, maxTokens: 8192,
+});
+// What discovery produces when /api/show fails or reports no context length:
+// a 32768 placeholder, not something the model said about itself.
+const guessed = (): DiscoveredModel => ({
+ id: "test", name: "test", tools: false, vision: false, reasoning: false,
+ contextWindow: 32768, maxTokens: 8192,
 });
 
 describe("per-model context maximum", () => {
@@ -25,5 +31,16 @@ describe("per-model context maximum", () => {
   const defaults = {...settings, contextLength: undefined};
   expect(toProviderModel(model(202752), defaults).contextWindow).toBe(32768);
   expect(toProviderModel(model(8192), defaults).contextWindow).toBe(8192);
+ });
+ it("does not cap an explicit preference at a guessed maximum", () => {
+  expect(toProviderModel(guessed(), settings).contextWindow).toBe(262144);
+  expect(toProviderModel(guessed(), {...settings, contextLength: 16384}).contextWindow).toBe(16384);
+ });
+ it("uses the default cap when the maximum is a guess and nothing is set", () => {
+  expect(toProviderModel(guessed(), {...settings, contextLength: undefined}).contextWindow).toBe(32768);
+ });
+ it("treats a cached model without the marker as guessed", () => {
+  const fromOldCache = JSON.parse(JSON.stringify(guessed())) as DiscoveredModel;
+  expect(toProviderModel(fromOldCache, settings).contextWindow).toBe(262144);
  });
 });

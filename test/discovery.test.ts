@@ -85,6 +85,25 @@ describe("discoverModels", () => {
 		});
 	});
 
+	it("marks a context window as known only when the model reported it", async () => {
+		stubOllama(["gemma4:26b", "silent:7b", "broken:7b"], {
+			"gemma4:26b": {
+				capabilities: ["completion"],
+				model_info: { "gemma4.context_length": 262144 },
+			},
+			"silent:7b": { capabilities: ["completion"] },
+			"broken:7b": async () => new Response("boom", { status: 500 }),
+		});
+
+		const models = await discoverModels(target);
+
+		expect(models.map((m) => [m.id, m.contextWindowKnown === true])).toEqual([
+			["gemma4:26b", true],
+			["silent:7b", false],
+			["broken:7b", false],
+		]);
+	});
+
 	it("asks for every model's details at once, not one after another", async () => {
 		let inFlight = 0;
 		let maxInFlight = 0;

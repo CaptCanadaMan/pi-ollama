@@ -11,7 +11,7 @@ const defaults: OllamaExtensionSettings = {
 };
 const discovered = (id: string, contextWindow: number): DiscoveredModel => ({
  id, name: id, tools: true, vision: false, reasoning: false,
- contextWindow, maxTokens: 8192,
+ contextWindow, contextWindowKnown: true, maxTokens: 8192,
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -53,6 +53,19 @@ describe("model limits reach the native request", () => {
   expect(requests[0].options?.num_ctx).toBe(expected);
   expect(registered.contextWindow).toBe(expected);
   expect(settings.contextLength).toBe(preference);
+ });
+
+ it("sends the full preference when the model's maximum is only a guess", async () => {
+  const requests = captureRequests();
+  const settings = {...defaults, contextLength: 131072};
+  const placeholder: DiscoveredModel = {...discovered("unknown", 32768), contextWindowKnown: false};
+  const registered = toProviderModel(placeholder, settings);
+  await runStream(
+   {messages: [{role: "user", content: "hello", timestamp: 1}]},
+   undefined,
+   {model: {...registered, provider: "ollama"}, settings},
+  );
+  expect(requests[0].options?.num_ctx).toBe(131072);
  });
 
  it("switches to a capped model and back without losing the preference", async () => {

@@ -228,10 +228,13 @@ export function toProviderModel(
 	// both views stay consistent. Resolution:
 	// Use the saved preference (or default cap), bounded by this model's
 	// discovered maximum. Keep the preference unchanged for model switches.
-	const effectiveContextWindow = Math.min(
-		m.contextWindow,
-		settings.contextLength ?? settings.numCtx,
-	);
+	// The bound only applies to a maximum the model reported: a placeholder
+	// window must not shrink what the user asked for. If that turns out to be
+	// more than the model has, Ollama refuses the overflow and pi compacts.
+	const preference = settings.contextLength ?? settings.numCtx;
+	const effectiveContextWindow = m.contextWindowKnown
+		? Math.min(m.contextWindow, preference)
+		: preference;
 	// The model's own thinking values drive pi's level picker and the `think`
 	// value on the wire (gh#13). Absent = legacy on/off for every level.
 	const thinkingLevelMap = toThinkingLevelMap(m.thinking);
