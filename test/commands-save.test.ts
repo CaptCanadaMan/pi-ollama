@@ -13,9 +13,8 @@ import type { OllamaExtensionSettings } from "../src/settings.js";
 type Handler = (args: string, ctx: unknown) => void | Promise<void>;
 
 let agentDir: string;
-const configFile = () => join(agentDir, "cache", "pi-ollama-config.json");
+const configFile = () => join(agentDir, "pi-ollama.json");
 const writeRaw = (text: string) => {
-	mkdirSync(join(agentDir, "cache"), { recursive: true });
 	writeFileSync(configFile(), text);
 };
 

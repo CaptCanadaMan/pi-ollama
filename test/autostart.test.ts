@@ -256,7 +256,7 @@ describe("offering to start Ollama when it isn't running", () => {
 		expect(select).not.toHaveBeenCalled();
 		expect(launcher.launch).not.toHaveBeenCalled();
 		expect(notify).toHaveBeenCalledTimes(1);
-		expect(notify.mock.calls[0]![0]).toMatch(/"autostart".*pi-ollama-config\.json/);
+		expect(notify.mock.calls[0]![0]).toMatch(/"autostart".*pi-ollama\.json/);
 	});
 
 	it("says where to look when the server never comes up, and doesn't refresh", async () => {

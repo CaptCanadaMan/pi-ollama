@@ -65,7 +65,7 @@ describe("loadSettings - per-model settings from the config file", () => {
 		expect(loadSettings().configIssues).toEqual([
 			{
 				severity: "error",
-				path: "pi-ollama-config.json",
+				path: "pi-ollama.json",
 				message:
 					"couldn't be read (Unexpected token } in JSON at position 52) - using defaults until it is fixed",
 			},
@@ -94,3 +94,77 @@ describe("loadSettings - the warm-up switch", () => {
 		expect(loadSettings().warm).toBe(false);
 	});
 });
+
+describe("loadSettings - which Ollama server", () => {
+	it("is the local one when nothing is set", () => {
+		const settings = loadSettings();
+
+		expect(settings.baseUrl).toBe("http://localhost:11434");
+		expect(settings.hostSource).toBe("default");
+		expect(settings.configIssues).toEqual([]);
+	});
+
+	it("uses the host saved in the config file", () => {
+		persisted.host = "ollama.home";
+
+		const settings = loadSettings();
+
+		expect(settings.baseUrl).toBe("http://ollama.home:11434");
+		expect(settings.hostSource).toBe("config");
+	});
+
+	it("lets OLLAMA_HOST override the saved host", () => {
+		vi.stubEnv("OLLAMA_HOST", "jetson.tailnet:11434");
+		persisted.host = "ollama.home";
+
+		const settings = loadSettings();
+
+		expect(settings.baseUrl).toBe("http://jetson.tailnet:11434");
+		expect(settings.hostSource).toBe("env");
+	});
+
+	it("treats an empty OLLAMA_HOST as not set", () => {
+		vi.stubEnv("OLLAMA_HOST", "  ");
+		persisted.host = "https://ollama.home/proxy/";
+
+		expect(loadSettings().baseUrl).toBe("https://ollama.home/proxy");
+	});
+
+	it("refuses a saved host that could leak a secret or misroute requests, and stays local", () => {
+		persisted.host = "https://andrew:secret@ollama.home";
+
+		const settings = loadSettings();
+
+		expect(settings.baseUrl).toBe("http://localhost:11434");
+		expect(settings.hostSource).toBe("default");
+		expect(settings.configIssues).toEqual([
+			{
+				severity: "error",
+				path: "host",
+				message: "must not contain a username or password - using localhost:11434",
+			},
+		]);
+	});
+
+	it("an OLLAMA_HOST override means a bad saved host is never read", () => {
+		vi.stubEnv("OLLAMA_HOST", "jetson.tailnet:11434");
+		persisted.host = 42 as unknown as string;
+
+		expect(loadSettings().configIssues).toEqual([]);
+	});
+
+	it("holds an API key back from a saved host it wasn't approved for", () => {
+		vi.stubEnv("OLLAMA_API_KEY", "sk-home");
+		persisted.host = "ollama.home";
+		persisted.apiKeyApproval = {
+			host: "http://localhost:11434",
+			fingerprint: keyFingerprint("sk-home"),
+		};
+
+		const settings = loadSettings();
+
+		expect(settings.apiKey).toBeUndefined();
+		expect(settings.apiKeyStatus).toBe("unapproved");
+	});
+});
+

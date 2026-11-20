@@ -3,17 +3,17 @@
 // Holds what should survive across pi launches: the choices the slash commands
 // save, and the per-model settings the user writes by hand (model-config.ts).
 //
-// Location: <pi agent dir>/cache/pi-ollama-config.json (paths.ts; by default
+// Location: <pi agent dir>/pi-ollama.json (paths.ts; by default
 // ~/.pi/agent/cache/), next to the model discovery cache and the debug log.
 //   - JSON object; tolerant to missing/extra fields.
 //   - Because part of it is hand-written, a file that can't be read is never
 //     saved over: the user's text matters more than the setting being saved.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { cachePath } from "./paths.js";
+import { configFilePath, legacyConfigFilePath } from "./paths.js";
 
-const configPath = () => cachePath("pi-ollama-config.json");
+const configPath = configFilePath;
 
 /**
  * Which host the key in OLLAMA_API_KEY was approved for. Only a fingerprint
@@ -25,6 +25,11 @@ export interface ApiKeyApproval {
 }
 
 export interface PersistedConfig {
+	/**
+	 * The default Ollama server, for when OLLAMA_HOST isn't set. Hand-edited;
+	 * takes what OLLAMA_HOST takes and is validated in settings.ts.
+	 */
+	host?: string;
 	/** User-set context length override (set via /ollama-context). */
 	contextLength?: number;
 	/** User-set keep_alive override (Idle Timeout in /ollama-preload). Absent = defer to the server. */
@@ -41,11 +46,31 @@ export interface PersistedConfig {
 	models?: unknown;
 }
 
+/**
+ * The file used to live in the cache folder, as cache/pi-ollama-config.json.
+ * It is moved once, as it is, the first time it is looked for and the new
+ * file doesn't exist. If it can't be moved it is read where it lies, so a
+ * permissions problem never costs the user their saved settings.
+ */
+function locate(): string {
+	if (existsSync(configPath())) return configPath();
+	const legacy = legacyConfigFilePath();
+	if (!existsSync(legacy)) return configPath();
+	try {
+		mkdirSync(dirname(configPath()), { recursive: true });
+		renameSync(legacy, configPath());
+		return configPath();
+	} catch {
+		return legacy;
+	}
+}
+
 /** The file's contents, or why it can't be used. A missing file is an empty config. */
 function read(): { config: PersistedConfig; problem?: string } {
 	try {
-		if (!existsSync(configPath())) return { config: {} };
-		const parsed: unknown = JSON.parse(readFileSync(configPath(), "utf-8"));
+		const path = locate();
+		if (!existsSync(path)) return { config: {} };
+		const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 			return { config: {}, problem: "the file must contain a JSON object" };
 		}
@@ -74,7 +99,7 @@ export function persistedConfigProblem(): string | undefined {
 export function savePersistedConfig(config: PersistedConfig): string | undefined {
 	const problem = read().problem;
 	if (problem) {
-		return `pi-ollama-config.json couldn't be read (${problem}), so it was left as it is. Fix or delete ${configPath()} and try again.`;
+		return `pi-ollama.json couldn't be read (${problem}), so it was left as it is. Fix or delete ${configPath()} and try again.`;
 	}
 	try {
 		mkdirSync(dirname(configPath()), { recursive: true });

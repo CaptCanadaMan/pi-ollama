@@ -87,7 +87,13 @@ export function registerCommands(
 		handler: async (_args, ctx) => {
 			const baseUrl = settings.baseUrl;
 			const lines: string[] = [];
-			lines.push(`Ollama base URL: ${baseUrl}`);
+			const from =
+				settings.hostSource === "env"
+					? " (OLLAMA_HOST)"
+					: settings.hostSource === "config"
+						? " (host in pi-ollama.json)"
+						: "";
+			lines.push(`Ollama base URL: ${baseUrl}${from}`);
 			lines.push("Model loading (/ollama-preload to change):");
 			for (const row of loadingRows(settings)) lines.push(`  ${row}`);
 			const keyLine = API_KEY_STATUS_LINES[settings.apiKeyStatus];

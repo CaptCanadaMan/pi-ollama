@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatIssue, loadModelConfig, resolveModelSettings } from "../src/model-config.js";
 
-// Per-model settings in pi-ollama-config.json (GH-14). The file is hand-edited,
+// Per-model settings in pi-ollama.json (GH-14). The file is hand-edited,
 // so everything in it is checked before use and every problem is reported.
 
 describe("loadModelConfig", () => {

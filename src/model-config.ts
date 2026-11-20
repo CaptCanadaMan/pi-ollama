@@ -1,6 +1,6 @@
 // Per-model settings: one schema, one validator, one resolver (GH-14).
 //
-// They live under `models` in ~/.pi/agent/cache/pi-ollama-config.json
+// They live under `models` in ~/.pi/agent/pi-ollama.json
 // (config.ts), keyed by exact model id. A model's own value wins over the
 // global one (the file's top level, set by the slash commands, else the env
 // var). Keys starting with "_" are comments and are ignored everywhere.

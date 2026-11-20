@@ -1,6 +1,7 @@
 // Extension settings resolved from environment variables and persisted config.
 //
-// OLLAMA_HOST                 — Ollama server host[:port]. Default: localhost:11434
+// OLLAMA_HOST                 — Ollama server host[:port]. Unset: the `host` saved in
+//                                the config file, else localhost:11434
 // OLLAMA_NATIVE_GHOST_RETRIES — Max retries on ghost-token response. Default: 2
 // OLLAMA_CONTEXT_LENGTH       — User-set context length override (also Ollama's own
 //                                env var, honored for cross-tool consistency).
@@ -25,12 +26,17 @@ import {
 	type ConfigIssue,
 	loadModelConfig,
 	type ModelConfigFile,
+	normalizeServerHost,
 	releaseAfterCheck,
 } from "./model-config.js";
+
+export type HostSource = "env" | "config" | "default";
 
 export interface OllamaExtensionSettings {
 	/** Base URL of the Ollama server, e.g. http://localhost:11434 */
 	baseUrl: string;
+	/** Where baseUrl came from: OLLAMA_HOST, the config file's `host`, or the local default. */
+	hostSource?: HostSource;
 	/**
 	 * keep_alive for /api/chat requests. Resolution order:
 	 *   1. Persisted config from `/ollama-preload` (Idle Timeout)
@@ -156,14 +162,35 @@ export function resolveApiKey(
 	return { apiKeyStatus: "unapproved" };
 }
 
-export function loadSettings(): OllamaExtensionSettings {
-	// OLLAMA_HOST may be bare "host:port" or already include a protocol.
-	const rawHost = process.env.OLLAMA_HOST ?? "localhost:11434";
-	const baseUrl = (rawHost.startsWith("http") ? rawHost : `http://${rawHost}`).replace(
-		/\/+$/,
-		"",
-	);
+const LOCAL_OLLAMA = "http://localhost:11434";
 
+/**
+ * Which Ollama server to use: OLLAMA_HOST if set, else the `host` saved in
+ * the config file, else the local one. The saved host is hand-edited, so it
+ * is checked like a named server's (model-config.ts); a bad one is reported
+ * and the local server is used. With OLLAMA_HOST set the file is not consulted.
+ */
+export function resolveHost(
+	envRaw: string | undefined,
+	saved: unknown,
+	issues: ConfigIssue[],
+): { baseUrl: string; hostSource: HostSource } {
+	const env = envRaw?.trim();
+	if (env) {
+		// OLLAMA_HOST may be bare "host:port" or already include a protocol.
+		const baseUrl = (env.startsWith("http") ? env : `http://${env}`).replace(/\/+$/, "");
+		return { baseUrl, hostSource: "env" };
+	}
+	if (saved !== undefined) {
+		const host = normalizeServerHost(saved);
+		if ("baseUrl" in host) return { baseUrl: host.baseUrl, hostSource: "config" };
+		// The value is left out on purpose: it may hold a password.
+		issues.push({ severity: "error", path: "host", message: `${host.reason} - using localhost:11434` });
+	}
+	return { baseUrl: LOCAL_OLLAMA, hostSource: "default" };
+}
+
+export function loadSettings(): OllamaExtensionSettings {
 	const rawRetries = process.env.OLLAMA_NATIVE_GHOST_RETRIES;
 	const ghostRetries = (() => {
 		if (!rawRetries) return 2;
@@ -183,11 +210,12 @@ export function loadSettings(): OllamaExtensionSettings {
 	})();
 	const contextLength = persistedContextLength ?? envContextLength;
 	const { config: modelConfig, issues: configIssues } = loadModelConfig(persisted);
+	const { baseUrl, hostSource } = resolveHost(process.env.OLLAMA_HOST, persisted.host, configIssues);
 	const fileProblem = persistedConfigProblem();
 	if (fileProblem) {
 		configIssues.unshift({
 			severity: "error",
-			path: "pi-ollama-config.json",
+			path: "pi-ollama.json",
 			message: `couldn't be read (${fileProblem}) - using defaults until it is fixed`,
 		});
 	}
@@ -211,6 +239,7 @@ export function loadSettings(): OllamaExtensionSettings {
 		modelConfig,
 		configIssues,
 		baseUrl,
+		hostSource,
 		keepAlive: resolveKeepAlive(persisted.keepAlive, process.env.OLLAMA_KEEP_ALIVE),
 		numCtx: 32768,
 		ghostRetries,

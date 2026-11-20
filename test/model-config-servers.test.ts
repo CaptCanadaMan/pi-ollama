@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatIssue, loadModelConfig, serverUrlFor } from "../src/model-config.js";
 
-// Named servers in pi-ollama-config.json (GH-14, host rules from GH-16): a
+// Named servers in pi-ollama.json (GH-14, host rules from GH-16): a
 // model can be pinned to an Ollama other than the default one. Hand-edited,
 // so every address is checked before anything is sent to it.
 

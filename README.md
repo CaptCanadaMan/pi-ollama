@@ -54,7 +54,7 @@ pi --no-extensions -e /absolute/path/to/pi-ollama/src/index.ts
 OLLAMA_HOST=192.168.1.20:11434 pi
 ```
 
-If that server sits behind a proxy that checks a token, see [Using a remote Ollama with an API key](#using-a-remote-ollama-with-an-api-key).
+If you'd rather not set that every time, save the address instead (see [The config file](#the-config-file)). If that server sits behind a proxy that checks a token, see [Using a remote Ollama with an API key](#using-a-remote-ollama-with-an-api-key).
 
 ---
 
@@ -73,7 +73,7 @@ If you've already manually deleted the package directory (find it with `npm root
 Optional cleanup of the model discovery cache and saved settings:
 
 ```bash
-rm -f ~/.pi/agent/cache/pi-ollama-models.json ~/.pi/agent/cache/pi-ollama-config.json
+rm -f ~/.pi/agent/cache/pi-ollama-models.json ~/.pi/agent/pi-ollama.json
 ```
 
 ---
@@ -121,7 +121,7 @@ Switch to one of the discovered models and use pi normally.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OLLAMA_HOST` | `localhost:11434` | Ollama server host[:port]. May include or omit protocol. |
+| `OLLAMA_HOST` | the saved `host`, else `localhost:11434` | Ollama server host[:port]. May include or omit protocol. When set, it overrides a `host` saved in the config file. |
 | `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` if used. |
 | `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** - a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by the Idle Timeout setting in `/ollama-preload` if one has been saved. |
 | `OLLAMA_API_KEY` | unset | Bearer token for an Ollama behind a token-checking proxy. Only sent to `OLLAMA_HOST`, and only after you approve it (see [Using a remote Ollama with an API key](#using-a-remote-ollama-with-an-api-key)). |
@@ -178,7 +178,7 @@ If pi starts and nothing is listening at a local `OLLAMA_HOST` (localhost, `127.
 - **macOS:** it opens the Ollama app hidden, the same way Ollama's own CLI does. You get the menu-bar icon and no window. Quit it from that icon when you're done.
 - **Linux:** it starts `ollama serve` in the background and tells you its PID, so `kill <pid>` stops it. The prompt also mentions the manual routes: `ollama serve` in another terminal, or `sudo systemctl start ollama`.
 
-The choices are Start Ollama now, Always start it automatically, Not now, and Never ask again. Always and Never are remembered in `~/.pi/agent/cache/pi-ollama-config.json`; delete the `"autostart"` line there to be asked again. In headless modes (rpc, print) it only starts Ollama if you've chosen Always. After a launch, `/ollama-status` repeats how to stop it.
+The choices are Start Ollama now, Always start it automatically, Not now, and Never ask again. Always and Never are remembered in `~/.pi/agent/pi-ollama.json`; delete the `"autostart"` line there to be asked again. In headless modes (rpc, print) it only starts Ollama if you've chosen Always. After a launch, `/ollama-status` repeats how to stop it.
 
 It never offers when Ollama is on another machine, or when a server is there but not answering, since a second one couldn't share its port.
 
@@ -256,9 +256,31 @@ The default for a model that has been used also changed. It used to stay loaded 
 
 ---
 
-## Per-model settings
+## The config file
 
-`/ollama-preload` sets one value for every model. If you switch between models that want different treatment - a small one you keep loaded all day, a big one you'd rather have unloaded when you're done - you can give a model its own values in pi-ollama's config file, `~/.pi/agent/cache/pi-ollama-config.json`. That's the same file the slash commands save to, so add a `models` block next to whatever is already there:
+You don't need this file. With Ollama running on the same machine, pi-ollama works with nothing configured, and the slash commands cover the everyday settings. The config file is for the cases they don't reach: a different Ollama server, or models that each want their own treatment. Everything in it is optional, and anything you leave out behaves as it does by default.
+
+The file is `~/.pi/agent/pi-ollama.json`. It's the same file the slash commands save to, so add to whatever is already there. Restart pi after editing it.
+
+Before this release the file was `~/.pi/agent/cache/pi-ollama-config.json`. If you have one, it's moved to the new place the first time pi starts, with nothing changed in it.
+
+### A different default server
+
+To use an Ollama on another machine without setting `OLLAMA_HOST` each time, save its address:
+
+```json
+{
+  "host": "192.168.1.20:11434"
+}
+```
+
+It takes what `OLLAMA_HOST` takes: a bare host, `host:port`, or a full `http://` or `https://` URL, which can include a reverse-proxy path. A bare host gets Ollama's port, 11434. If `OLLAMA_HOST` is set, it wins. `/ollama-status` shows which server is in use and where the address came from.
+
+The idea of a saved host, and the rules for what counts as a safe address, came from [dwhacks](https://github.com/dwhacks) in [#16](https://github.com/CaptCanadaMan/pi-ollama/pull/16).
+
+### Per-model settings
+
+`/ollama-preload` sets one value for every model. If you switch between models that want different treatment - a small one you keep loaded all day, a big one you'd rather have unloaded when you're done - you can give a model its own values with a `models` block:
 
 ```json
 {
@@ -278,11 +300,11 @@ The key is the model's exact id, as `/ollama-status` lists it. A model's own val
 | `releaseAfter` | `0`, a duration like `"10m"`, whole seconds, or `"keep"` | Unload on Swap or Exit for this model: `0` is Immediate, a duration is After that long, `"keep"` is Never unload |
 | `server` | the name of an entry in `servers` | The Ollama server this model is on (see below) |
 
-Restart pi after editing the file. Any key that starts with `_` is ignored, which gives you somewhere to leave yourself a note.
+Any key that starts with `_` is ignored, which gives you somewhere to leave yourself a note.
 
 ### Models on another Ollama server
 
-A model can live on a different Ollama from the one `OLLAMA_HOST` points at. Name the server once under `servers`, then pin models to it:
+A model can live on a different Ollama from your default one. Name the server once under `servers`, then pin models to it:
 
 ```json
 {
@@ -297,11 +319,11 @@ A model can live on a different Ollama from the one `OLLAMA_HOST` points at. Nam
 
 The pinned model shows up in pi's model list next to your local ones, and its requests go to that server. `/ollama-status` marks it with the server's address.
 
-- `host` takes what `OLLAMA_HOST` takes: a bare host, `host:port`, or a full `http://` or `https://` URL, which can include a reverse-proxy path. A bare host gets Ollama's port, 11434.
+- `host` follows the same rules as the default `host` above.
 - An address with a username and password in it, a query string or a fragment is refused.
 - Only the models you pin are looked up on a named server. pi-ollama doesn't list everything that server has.
 - If a pinned model has the same id as a local one, the pinned one is used.
-- `OLLAMA_API_KEY` is never sent to a named server. It belongs to the `OLLAMA_HOST` server it was approved for.
+- `OLLAMA_API_KEY` is never sent to a named server. It belongs to the default server it was approved for.
 - If a named server can't be reached at startup, pi says so and uses what it last knew about that model. If your main server is the one that's down, the pinned models still load.
 
 The file is checked when pi starts. A value that doesn't make sense is left out and pi tells you which one and why, so a typo doesn't quietly do nothing. If the file can't be read at all (a stray comma is the usual cause), pi-ollama runs on its defaults and the slash commands refuse to save until you fix it, so they can't overwrite what you wrote.
@@ -340,7 +362,7 @@ To set it up:
 OLLAMA_HOST=https://ollama.home.example:11434 OLLAMA_API_KEY=your-token pi
 ```
 
-Approve the key when pi asks. If you answer No, pi runs without it for that session and asks again next time. To stop sending the key, unset `OLLAMA_API_KEY`. To withdraw an approval, delete the `"apiKeyApproval"` line from `~/.pi/agent/cache/pi-ollama-config.json`.
+Approve the key when pi asks. If you answer No, pi runs without it for that session and asks again next time. To stop sending the key, unset `OLLAMA_API_KEY`. To withdraw an approval, delete the `"apiKeyApproval"` line from `~/.pi/agent/pi-ollama.json`.
 
 ---
 

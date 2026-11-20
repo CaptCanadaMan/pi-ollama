@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { cachePath } from "./paths.js";
+import { cachePath, configFilePath } from "./paths.js";
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import { dbg } from "./debug.js";
 import type { DiscoveredModel } from "./discovery.js";
@@ -101,7 +101,7 @@ export function registerAutostart(
 		if (preference === "never") {
 			ctx.ui.notify(
 				`Ollama isn't running at ${settings.baseUrl}. Auto-start is off - remove "autostart" ` +
-					`from ${cachePath("pi-ollama-config.json")} to be asked again.`,
+					`from ${configFilePath()} to be asked again.`,
 				"info",
 			);
 			return;

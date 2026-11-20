@@ -16,10 +16,9 @@ const IDLE_ROW = /^Idle Timeout: /;
 const UNLOAD_ROW = /^Unload on Swap or Exit: /;
 
 let agentDir: string;
-const configFile = () => join(agentDir, "cache", "pi-ollama-config.json");
+const configFile = () => join(agentDir, "pi-ollama.json");
 const savedConfig = () => JSON.parse(readFileSync(configFile(), "utf-8")) as Record<string, unknown>;
 const writeRaw = (text: string) => {
-	mkdirSync(join(agentDir, "cache"), { recursive: true });
 	writeFileSync(configFile(), text);
 };
 
@@ -229,7 +228,7 @@ describe("/ollama-preload - Idle Timeout", () => {
 		const { said, notify } = await open(settings, [IDLE_ROW, "30m"]);
 
 		expect(notify.mock.calls[0]?.[1]).toBe("error");
-		expect(said[0]).toMatch(/^Not changed: pi-ollama-config\.json couldn't be read/);
+		expect(said[0]).toMatch(/^Not changed: pi-ollama\.json couldn't be read/);
 		expect(settings.keepAlive).toBeUndefined();
 		expect(readFileSync(configFile(), "utf-8")).toBe(broken);
 	});
