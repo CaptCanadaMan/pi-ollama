@@ -68,6 +68,8 @@ function setup(settleMs = 0) {
 		setStatus,
 		sessionStart: (m: object) => handlers.get("session_start")?.({ reason: "startup" }, { model: m, ui }),
 		selectModel: (m: object) => handlers.get("model_select")?.({ model: m }, { model: m, ui }),
+		/** The user sent a prompt: pi starts a run. */
+		promptSent: () => handlers.get("agent_start")?.({}, { ui }),
 		/** A real turn finished on this model. */
 		turnEnded: (m: { id: string }) =>
 			handlers.get("message_end")?.(
@@ -137,6 +139,31 @@ describe("switching models during a warm-up", () => {
 		await settle(120);
 
 		expect(warmUps().map((w) => w.body.model)).toEqual(["gemma4:e4b"]);
+	});
+
+	it("skips the warm-up when a prompt goes out first: that turn loads the model itself", async () => {
+		const { warmUps } = stubOllama();
+		const { selectModel, promptSent } = setup(60);
+
+		selectModel(small);
+		promptSent();
+		await settle(160);
+
+		expect(warmUps()).toEqual([]);
+	});
+
+	it("still releases the model left behind when a prompt beat the warm-up", async () => {
+		const { warmUps, unloads } = stubOllama();
+		const { sessionStart, selectModel, promptSent } = setup(60);
+
+		sessionStart(big);
+		await vi.waitFor(() => expect(warmUps()).toHaveLength(1));
+		await settle();
+		selectModel(small);
+		promptSent();
+
+		await vi.waitFor(() => expect(unloads()).toEqual(["gemma4:12b"]));
+		expect(warmUps()).toHaveLength(1);
 	});
 
 	it("doesn't make the session's first warm-up wait", async () => {

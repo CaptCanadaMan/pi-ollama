@@ -35,6 +35,8 @@ export interface PersistedConfig {
 	autostart?: "always" | "never";
 	/** Warm-up on/off set via /ollama-warm-up. Absent = OLLAMA_NATIVE_WARM, else on. */
 	warm?: boolean;
+	/** How long a used model stays loaded after the user leaves it (/ollama-release). Absent = keep_alive decides. */
+	releaseAfter?: string | number;
 	/** Per-model settings, keyed by exact model id. Hand-edited; validated by model-config.ts. */
 	models?: unknown;
 }

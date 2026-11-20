@@ -72,7 +72,12 @@ interface CommandContext extends WarmContext {
 
 interface Pi {
 	on?: (
-		event: "session_start" | "model_select" | "thinking_level_select" | "message_end",
+		event:
+			| "session_start"
+			| "model_select"
+			| "thinking_level_select"
+			| "message_end"
+			| "agent_start",
 		handler: (
 			event: {
 				model?: WarmModel;
@@ -96,14 +101,14 @@ const OFF = "Off";
 export interface WarmupDeps {
 	/** Resolves once Ollama has answered a refresh. */
 	whenReady: () => Promise<void>;
-	/** How long a model switch waits before warming, in case another follows. Default 1200 ms. */
+	/** How long a model switch waits before warming, in case another follows. Default 2500 ms. */
 	settleMs?: number;
 }
 
 // Reading pi's ~7,800-token prompt takes 17 s on an M1 Max and longer on
 // smaller hardware; timing out would throw that work away.
 const WARM_TIMEOUT_MS = 600_000;
-const DEFAULT_SETTLE_MS = 1200;
+const DEFAULT_SETTLE_MS = 2500;
 
 export function registerWarmup(
 	pi: Pi,
@@ -121,6 +126,9 @@ export function registerWarmup(
 	// them, so browsing the model list doesn't leave a pile of loaded models.
 	// A model that was already loaded, or that the user has used, is never here.
 	const loadedUnused = new Map<string, OllamaTarget>();
+	// Counts the runs pi has started, so a warm-up that was waiting can tell a
+	// prompt went out in the meantime.
+	let promptsSent = 0;
 
 	/** The active tools, in pi's order - the order the first turn declares them in. */
 	const activeTools = (): ToolInfo[] => {
@@ -186,10 +194,14 @@ export function registerWarmup(
 	const warm = async (model: WarmModel, ctx: WarmContext, waitMs = 0) => {
 		latest = model;
 		stopOthers(model.id);
+		const promptsBefore = promptsSent;
 		await whenReady();
 		if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
 		if (model !== latest) return;
 		releaseOthers(model.id);
+		// A prompt that went out while we waited is already loading the model and
+		// reading the same prefix; a warm-up beside it would only compete with it.
+		if (promptsSent !== promptsBefore) return;
 		const body = warmBody(model, ctx);
 		// Only an identical request is a duplicate: a new thinking level or tool
 		// set is a different prefix and gets its own warm-up.
@@ -225,6 +237,9 @@ export function registerWarmup(
 	// A switch waits a moment before loading anything, so cycling through the
 	// model list only warms the model the user stops on.
 	pi.on?.("model_select", (event, ctx) => request(event.model, ctx, settleMs));
+	pi.on?.("agent_start", () => {
+		promptsSent++;
+	});
 	// A real turn makes the model the user's: from then on keep_alive decides
 	// how long it stays loaded, and this session no longer unloads it.
 	pi.on?.("message_end", (event, ctx) => {

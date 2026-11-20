@@ -8,6 +8,7 @@
 // cleanly with the TUI regardless of when it fires.
 
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
+import { describeRelease } from "./release.js";
 import type { DiscoveredModel } from "./discovery.js";
 import { errorText } from "./errors.js";
 import { listModels, runningModels, showModel } from "./ollama-client.js";
@@ -90,6 +91,9 @@ export function registerCommands(
 					: "keep_alive: defer to server (default)",
 			);
 			lines.push(`Warm-up: ${settings.warm ? "on" : "off"} (/ollama-warm-up to change)`);
+			lines.push(
+				`A model you've used is ${describeRelease(settings.releaseAfter)} (/ollama-release to change)`,
+			);
 			const keyLine = API_KEY_STATUS_LINES[settings.apiKeyStatus];
 			if (keyLine) lines.push(keyLine);
 			if (settings.startedOllamaStopHint) {

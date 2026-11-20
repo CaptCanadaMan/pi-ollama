@@ -112,6 +112,7 @@ Switch to one of the discovered models and use pi normally.
 | `/ollama-context` | Set the context length (`num_ctx`) pi-ollama sends to `/api/chat`. Picker with common presets + custom input. Persists across pi launches. |
 | `/ollama-keep-alive` | Set the `keep_alive` pi-ollama sends to `/api/chat`, or (the default) send none and let the Ollama server's own setting decide. Picker with presets + custom input. Persists across pi launches. |
 | `/ollama-warm-up` | Turn warm-up on or off (see [Warm-up](#warm-up)). Persists across pi launches. |
+| `/ollama-release` | Choose whether a model you've used is unloaded when you switch away or quit pi (see [Releasing models you've finished with](#releasing-models-youve-finished-with)). Persists across pi launches. |
 | `/ollama-stats` | Show tok/s throughput for this session's Ollama generations, per model: last, session average, fastest, tokens generated. |
 
 ---
@@ -195,9 +196,27 @@ It can't make the read itself any faster. If you send a message before the warm-
 ⠹ warming gemma4:12b · reading pi's prompt · 23s
 ```
 
-Switching models doesn't stack warm-ups. When you pick another model, the warm-up for the one you left is stopped, and the new one waits about a second before it starts, so cycling through the list with Ctrl+P only warms the model you land on. If the warm-up is what loaded a model and you never sent it anything, moving on unloads it again. A model that was already in memory, or one you've had a turn with, is left alone: how long those stay loaded is `keep_alive`'s business.
+Switching models doesn't stack warm-ups. When you pick another model, the warm-up for the one you left is stopped, and the new one waits a couple of seconds before it starts, so cycling through the list with Ctrl+P only warms the model you land on. If you send a prompt before that wait is over, the warm-up is skipped, since your prompt loads the model anyway. If the warm-up is what loaded a model and you never sent it anything, moving on unloads it again. A model that was already in memory is left alone, and so is one you've had a turn with, unless you've asked for those to be released (next section).
 
 Warm-up loads the model as soon as a session starts, which costs memory whether or not you use it. Turn it off with `/ollama-warm-up` (saved across launches) or `OLLAMA_NATIVE_WARM=0`.
+
+---
+
+## Releasing models you've finished with
+
+A model you've used stays loaded for as long as `keep_alive` says. With `keep_alive` at `-1` that means until Ollama quits: it survives switching to another model, and it survives quitting pi. Work through a few large models in one sitting and they are all still in memory at the end of it.
+
+`/ollama-release` decides what happens to a used model at the moment you leave it, whether by switching to another model or by quitting pi:
+
+| Choice | What happens when you leave the model |
+|---|---|
+| Leave it to keep_alive (default) | Nothing. This is how it has always worked. |
+| As soon as I leave the model | Ollama unloads it straight away. |
+| 5 minutes, 30 minutes, or a time you type | Ollama unloads it that long after you left, unless you come back to it first. |
+
+The choice is saved across pi launches, and `/ollama-status` shows it. Switching away and straight back within a couple of seconds doesn't count as leaving.
+
+The countdown is Ollama's own, so it doesn't need pi to stay open. One thing to know if you share an Ollama server: releasing a model unloads it for anything else that was using it too, such as a second pi session. It will just load again on that session's next request.
 
 ---
 
@@ -220,6 +239,7 @@ The key is the model's exact id, as `/ollama-status` lists it. A model's own val
 |---|---|---|
 | `keepAlive` | a duration like `"10m"` or `"1h30m"`, or whole seconds (`-1` keeps it loaded) | `keep_alive` for this model's requests |
 | `warm` | `true` or `false` | Whether this model is warmed up at session start and when you switch to it |
+| `releaseAfter` | `0`, a duration like `"10m"`, or whole seconds | What `/ollama-release` sets globally, for this model only: `0` unloads it as soon as you leave it, a duration that long after |
 
 Restart pi after editing the file. Any key that starts with `_` is ignored, which gives you somewhere to leave yourself a note.
 

@@ -135,20 +135,31 @@ export async function loadModel(
 }
 
 /**
- * Ask Ollama to drop a model from memory now: an empty /api/chat with
- * keep_alive 0. If another client is mid-request on it, Ollama finishes that
- * first.
+ * Tell Ollama how much longer to keep a model in memory, without generating
+ * anything: an empty /api/chat carrying only keep_alive. 0 drops it now; a
+ * duration restarts its idle timer at that length. If another client is
+ * mid-request on the model, Ollama finishes that first.
  */
-export async function unloadModel(
+export async function setModelLifetime(
 	target: OllamaTarget,
 	modelId: string,
+	keepAlive: string | number,
 	options: RequestOptions = { timeoutMs: 30_000 },
 ): Promise<void> {
 	await requestJson<unknown>(target, "/api/chat", options, {
 		model: modelId,
 		messages: [],
-		keep_alive: 0,
+		keep_alive: keepAlive,
 	});
+}
+
+/** Ask Ollama to drop a model from memory now. */
+export function unloadModel(
+	target: OllamaTarget,
+	modelId: string,
+	options?: RequestOptions,
+): Promise<void> {
+	return setModelLifetime(target, modelId, 0, options);
 }
 
 /** A model's details and capabilities, from /api/show. */

@@ -21,7 +21,12 @@
 
 import { createHash } from "node:crypto";
 import { type ApiKeyApproval, loadPersistedConfig, persistedConfigProblem } from "./config.js";
-import { type ConfigIssue, loadModelConfig, type ModelConfigFile } from "./model-config.js";
+import {
+	type ConfigIssue,
+	loadModelConfig,
+	type ModelConfigFile,
+	releaseAfterCheck,
+} from "./model-config.js";
 
 export interface OllamaExtensionSettings {
 	/** Base URL of the Ollama server, e.g. http://localhost:11434 */
@@ -55,6 +60,12 @@ export interface OllamaExtensionSettings {
 	throughput: boolean;
 	/** Load the model at session start / model switch (OLLAMA_NATIVE_WARM). Default: true. */
 	warm: boolean;
+	/**
+	 * What happens to a model the user has used once they leave it (release.ts):
+	 * 0 unloads it at once, a duration gives it that long, undefined (default)
+	 * leaves it to keep_alive. Set by /ollama-release; mutable at runtime.
+	 */
+	releaseAfter?: string | number;
 	/**
 	 * Per-model settings from the config file's `models` block (model-config.ts).
 	 * A model's own keepAlive / warm wins over the global ones above; read them
@@ -180,7 +191,22 @@ export function loadSettings(): OllamaExtensionSettings {
 		});
 	}
 
+	// Hand-editable, so checked like the per-model values are.
+	let releaseAfter = persisted.releaseAfter;
+	if (releaseAfter !== undefined) {
+		const reason = releaseAfterCheck(releaseAfter);
+		if (reason) {
+			configIssues.push({
+				severity: "error",
+				path: "releaseAfter",
+				message: `= ${JSON.stringify(releaseAfter)} ${reason} - ignored`,
+			});
+			releaseAfter = undefined;
+		}
+	}
+
 	return {
+		...(releaseAfter !== undefined && { releaseAfter }),
 		modelConfig,
 		configIssues,
 		baseUrl,

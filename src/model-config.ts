@@ -27,6 +27,8 @@ export interface ConfigIssue {
 export interface ModelSettings {
 	keepAlive?: string | number;
 	warm?: boolean;
+	/** How long the model stays loaded after the user leaves it (release.ts). 0 = unload at once. */
+	releaseAfter?: string | number;
 }
 
 export interface ModelConfigFile {
@@ -57,9 +59,21 @@ const keepAliveCheck: Check = (v) => {
 	return 'must be a duration like "30m" / "1h30m" or a whole number of seconds (-1 = keep loaded)';
 };
 
+/**
+ * Why a releaseAfter value is invalid, or undefined when it's fine. Unlike
+ * keep_alive there is no "forever" here: leaving the setting out is how you
+ * say "don't release". Shared with the global setting (settings.ts, release.ts).
+ */
+export const releaseAfterCheck: Check = (v) => {
+	if (typeof v === "number" && Number.isInteger(v) && v >= 0) return undefined;
+	if (typeof v === "string" && GO_DURATION_RE.test(v)) return undefined;
+	return 'must be 0 (unload at once), a duration like "10m" / "1h30m", or a whole number of seconds';
+};
+
 const MODEL_FIELDS: Record<keyof ModelSettings, Check> = {
 	keepAlive: keepAliveCheck,
 	warm: bool,
+	releaseAfter: releaseAfterCheck,
 };
 
 const USE_MODEL_OVERRIDES = (field: string) =>
@@ -135,12 +149,15 @@ export function loadModelConfig(raw: unknown): { config: ModelConfigFile; issues
 export interface GlobalSettings {
 	keepAlive?: string | number;
 	warm: boolean;
+	releaseAfter?: string | number;
 }
 
 export interface ResolvedModelSettings {
 	/** Absent means the field is left out of the request and the server decides. */
 	keepAlive?: string | number;
 	warm: boolean;
+	/** Absent means a model the user leaves is not released: keep_alive decides. */
+	releaseAfter?: string | number;
 }
 
 /** One model's effective settings: its own entry, else the global value. */
@@ -152,9 +169,11 @@ export function resolveModelSettings(
 	const entry: ModelSettings =
 		config && modelId !== undefined && own(config.models, modelId) ? (config.models[modelId] ?? {}) : {};
 	const keepAlive = entry.keepAlive ?? global.keepAlive;
+	const releaseAfter = entry.releaseAfter ?? global.releaseAfter;
 	return {
 		...(keepAlive !== undefined && { keepAlive }),
 		warm: entry.warm ?? global.warm,
+		...(releaseAfter !== undefined && { releaseAfter }),
 	};
 }
 
