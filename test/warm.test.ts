@@ -3,10 +3,14 @@ import type { PersistedConfig } from "../src/config.js";
 
 // The config module is mocked so /ollama-warm-up never touches the real ~/.pi file.
 let saved: PersistedConfig | undefined;
+/** Set to make the next save fail the way an unreadable config file does. */
+let refusal: string | undefined;
 vi.mock("../src/config.js", () => ({
 	loadPersistedConfig: () => ({}),
 	savePersistedConfig: (c: PersistedConfig) => {
+		if (refusal) return refusal;
 		saved = c;
+		return undefined;
 	},
 }));
 
@@ -54,7 +58,7 @@ function setup(
 			config: { handler: (args: string, ctx: unknown) => Promise<void> },
 		) => commands.set(name, config.handler),
 	};
-	registerWarmup(pi, { ...settings, ...overrides }, { whenReady });
+	registerWarmup(pi, { ...settings, ...overrides }, { whenReady, settleMs: 0 });
 	const setStatus = vi.fn();
 	const ui = { setStatus };
 	const notify = vi.fn();
@@ -75,6 +79,7 @@ function setup(
 afterEach(() => {
 	vi.unstubAllGlobals();
 	saved = undefined;
+	refusal = undefined;
 });
 
 describe("warming the model", () => {
@@ -459,6 +464,18 @@ describe("/ollama-warm-up", () => {
 		expect(saved).toEqual({ warm: true });
 		await vi.waitFor(() => expect(bodies).toHaveLength(1));
 		expect(bodies[0]!.model).toBe("gemma4:26b");
+	});
+
+	it("leaves warm-up as it was when the config file can't be saved", async () => {
+		const { bodies } = stubOllama();
+		const { warmUpCommand, sessionStart, notify } = setup();
+		refusal = "pi-ollama-config.json couldn't be read (bad JSON), so it was left as it is.";
+
+		await warmUpCommand("Off");
+		sessionStart(gemma);
+
+		expect(notify).toHaveBeenCalledWith(`Not changed: ${refusal}`, "error");
+		await vi.waitFor(() => expect(bodies).toHaveLength(1));
 	});
 
 	it("confirms the change, and cancelling changes nothing", async () => {

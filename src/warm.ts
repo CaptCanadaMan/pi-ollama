@@ -11,7 +11,13 @@
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import { dbg } from "./debug.js";
 import { errorText } from "./errors.js";
-import { loadModel, targetFor } from "./ollama-client.js";
+import {
+	loadModel,
+	type OllamaTarget,
+	runningModels,
+	targetFor,
+	unloadModel,
+} from "./ollama-client.js";
 import { buildChatRequestBody, buildTurnRequest, type PiModel, requestOptions } from "./provider.js";
 import type { OllamaExtensionSettings } from "./settings.js";
 import { resolveModelSettings } from "./model-config.js";
@@ -66,8 +72,15 @@ interface CommandContext extends WarmContext {
 
 interface Pi {
 	on?: (
-		event: "session_start" | "model_select" | "thinking_level_select",
-		handler: (event: { model?: WarmModel; level?: string }, ctx: WarmContext) => void,
+		event: "session_start" | "model_select" | "thinking_level_select" | "message_end",
+		handler: (
+			event: {
+				model?: WarmModel;
+				level?: string;
+				message?: { role?: string; api?: string; model?: string };
+			},
+			ctx: WarmContext,
+		) => void,
 	) => void;
 	getAllTools?: () => ToolInfo[];
 	getActiveTools?: () => string[];
@@ -83,19 +96,31 @@ const OFF = "Off";
 export interface WarmupDeps {
 	/** Resolves once Ollama has answered a refresh. */
 	whenReady: () => Promise<void>;
+	/** How long a model switch waits before warming, in case another follows. Default 1200 ms. */
+	settleMs?: number;
 }
+
+// Reading pi's ~7,800-token prompt takes 17 s on an M1 Max and longer on
+// smaller hardware; timing out would throw that work away.
+const WARM_TIMEOUT_MS = 600_000;
+const DEFAULT_SETTLE_MS = 1200;
 
 export function registerWarmup(
 	pi: Pi,
 	settings: OllamaExtensionSettings,
-	{ whenReady }: WarmupDeps,
+	{ whenReady, settleMs = DEFAULT_SETTLE_MS }: WarmupDeps,
 ): void {
 	// The model the user most recently landed on. A warm-up that was waiting
 	// for Ollama and has since been overtaken by a switch is dropped, so
 	// switching around before Ollama is up doesn't load several models.
 	let latest: WarmModel | undefined;
 	// Warm-up requests in flight, by their exact body.
-	const inFlight = new Set<string>();
+	const inFlight = new Map<string, { modelId: string; controller: AbortController }>();
+	// Models this session's warm-up brought into memory and that have had no
+	// turn yet, with the server each is on. Moving to another model unloads
+	// them, so browsing the model list doesn't leave a pile of loaded models.
+	// A model that was already loaded, or that the user has used, is never here.
+	const loadedUnused = new Map<string, OllamaTarget>();
 
 	/** The active tools, in pi's order - the order the first turn declares them in. */
 	const activeTools = (): ToolInfo[] => {
@@ -129,23 +154,58 @@ export function registerWarmup(
 		return { ...body, stream: false, options: { ...body.options, num_predict: 1 } };
 	};
 
-	const warm = async (model: WarmModel, ctx: WarmContext) => {
+	/** Stop warm-ups still running for any other model: two at once fight over memory and the GPU. */
+	const stopOthers = (modelId: string) => {
+		for (const running of inFlight.values()) {
+			if (running.modelId !== modelId) running.controller.abort();
+		}
+	};
+
+	/** Unload every model this session loaded and never used, except the one now wanted. */
+	const releaseOthers = (modelId: string) => {
+		for (const [id, target] of loadedUnused) {
+			if (id === modelId) continue;
+			loadedUnused.delete(id);
+			unloadModel(target, id).catch((e) =>
+				dbg("unload-failed", { model: id, error: errorText(e) }),
+			);
+		}
+	};
+
+	/** Remember the model as ours to release, but only if we can see it wasn't loaded already. */
+	const claimIfNotLoaded = async (model: WarmModel, target: OllamaTarget) => {
+		if (loadedUnused.has(model.id)) return;
+		try {
+			const running = await runningModels(target);
+			if (!running.some((m) => m.name === model.id)) loadedUnused.set(model.id, target);
+		} catch {
+			// Can't tell: leave it alone rather than unload someone else's model.
+		}
+	};
+
+	const warm = async (model: WarmModel, ctx: WarmContext, waitMs = 0) => {
 		latest = model;
+		stopOthers(model.id);
 		await whenReady();
+		if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
 		if (model !== latest) return;
+		releaseOthers(model.id);
 		const body = warmBody(model, ctx);
 		// Only an identical request is a duplicate: a new thinking level or tool
 		// set is a different prefix and gets its own warm-up.
 		const key = JSON.stringify(body);
 		if (inFlight.has(key)) return;
-		inFlight.add(key);
+		const controller = new AbortController();
+		inFlight.set(key, { modelId: model.id, controller });
+		const target = targetFor(settings, model.baseUrl);
 		const doing = ctx.getSystemPrompt ? "reading pi's prompt" : "loading the model";
 		const stopTicker = startFooterTicker(ctx, `warming ${model.id} · ${doing}`);
 		try {
-			await loadModel(targetFor(settings, model.baseUrl), body);
+			await claimIfNotLoaded(model, target);
+			await loadModel(target, body, { timeoutMs: WARM_TIMEOUT_MS, signal: controller.signal });
 		} catch (e) {
 			// Best-effort: the first real turn loads the model anyway, and reports
-			// any real problem there.
+			// any real problem there. A stopped warm-up lands here too.
 			dbg("warm-failed", { model: model.id, error: errorText(e) });
 		} finally {
 			inFlight.delete(key);
@@ -155,12 +215,24 @@ export function registerWarmup(
 
 	// Resolved here, per request, so /ollama-warm-up takes effect at once. A
 	// model's own `warm` in the config file wins over the global switch.
-	const request = (model: WarmModel | undefined, ctx: WarmContext) => {
+	const request = (model: WarmModel | undefined, ctx: WarmContext, waitMs = 0) => {
 		if (model?.api !== "ollama-native") return;
-		if (resolveModelSettings(settings.modelConfig, settings, model.id).warm) void warm(model, ctx);
+		if (resolveModelSettings(settings.modelConfig, settings, model.id).warm) {
+			void warm(model, ctx, waitMs);
+		}
 	};
 	pi.on?.("session_start", (_event, ctx) => request(ctx.model, ctx));
-	pi.on?.("model_select", (event, ctx) => request(event.model, ctx));
+	// A switch waits a moment before loading anything, so cycling through the
+	// model list only warms the model the user stops on.
+	pi.on?.("model_select", (event, ctx) => request(event.model, ctx, settleMs));
+	// A real turn makes the model the user's: from then on keep_alive decides
+	// how long it stays loaded, and this session no longer unloads it.
+	pi.on?.("message_end", (event, ctx) => {
+		const message = event.message;
+		if (message?.role !== "assistant" || message.api !== "ollama-native") return;
+		const id = message.model ?? ctx.model?.id;
+		if (id) loadedUnused.delete(id);
+	});
 	// A new thinking level can change how the prompt renders, so the cached
 	// prefix no longer matches. The event carries the new level; ctx may not yet.
 	pi.on?.("thinking_level_select", (event, ctx) =>
@@ -179,7 +251,11 @@ export function registerWarmup(
 			const on = choice === ON;
 			const config = loadPersistedConfig();
 			config.warm = on;
-			savePersistedConfig(config);
+			const unsaved = savePersistedConfig(config);
+			if (unsaved) {
+				ctx.ui?.notify?.(`Not changed: ${unsaved}`, "error");
+				return;
+			}
 			settings.warm = on;
 			ctx.ui?.notify?.(
 				on

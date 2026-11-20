@@ -14,6 +14,8 @@ export interface OllamaTarget {
 export interface RequestOptions {
 	/** Give up after this long. Default: 5 s - these are quick metadata reads. */
 	timeoutMs?: number;
+	/** Lets the caller give up early, e.g. a warm-up the user has moved on from. */
+	signal?: AbortSignal;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -54,12 +56,13 @@ function headersFor(
 async function requestJson<T>(
 	target: OllamaTarget,
 	path: string,
-	{ timeoutMs = DEFAULT_TIMEOUT_MS }: RequestOptions,
+	{ timeoutMs = DEFAULT_TIMEOUT_MS, signal }: RequestOptions,
 	body?: object,
 ): Promise<T> {
+	const timeout = AbortSignal.timeout(timeoutMs);
 	const res = await fetch(url(target, path), {
 		headers: headersFor(target),
-		signal: AbortSignal.timeout(timeoutMs),
+		signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
 		...(body && { method: "POST", body: JSON.stringify(body) }),
 	});
 	if (!res.ok) {
@@ -129,6 +132,23 @@ export async function loadModel(
 	options: RequestOptions = { timeoutMs: 600_000 },
 ): Promise<void> {
 	await requestJson<unknown>(target, "/api/chat", options, body);
+}
+
+/**
+ * Ask Ollama to drop a model from memory now: an empty /api/chat with
+ * keep_alive 0. If another client is mid-request on it, Ollama finishes that
+ * first.
+ */
+export async function unloadModel(
+	target: OllamaTarget,
+	modelId: string,
+	options: RequestOptions = { timeoutMs: 30_000 },
+): Promise<void> {
+	await requestJson<unknown>(target, "/api/chat", options, {
+		model: modelId,
+		messages: [],
+		keep_alive: 0,
+	});
 }
 
 /** A model's details and capabilities, from /api/show. */
