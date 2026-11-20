@@ -20,7 +20,7 @@ describe("loadModelConfig", () => {
 
 	it("is empty, without complaint, for a file with no models block", () => {
 		expect(loadModelConfig({ contextLength: 65536, warm: false })).toEqual({
-			config: { models: {} },
+			config: { models: {}, servers: {} },
 			issues: [],
 		});
 		expect(loadModelConfig(undefined).issues).toEqual([]);

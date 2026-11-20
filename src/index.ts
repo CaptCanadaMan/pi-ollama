@@ -23,7 +23,8 @@
 //   OLLAMA_NATIVE_THROUGHPUT     - tok/s telemetry. On by default; 0 switches it off
 
 import { loadSettings, type OllamaExtensionSettings } from "./settings.js";
-import { discoverModels, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";
+import { discoverAll, loadCache, saveCache, type DiscoveredModel } from "./discovery.js";
+import { type ConfigIssue, emptyModelConfig } from "./model-config.js";
 import { streamOllama } from "./provider.js";
 import { registerApiKeyApproval } from "./api-key-approval.js";
 import { registerConfigReporting } from "./config-report.js";
@@ -178,13 +179,20 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	// live, keep the list for the next startup, register it.
 	let models: DiscoveredModel[] = [];
 	const ready = createReadySignal();
+	// What discovery found wrong with the named servers, last time it ran.
+	let serverIssues: ConfigIssue[] = [];
 	const refreshModels = async (): Promise<DiscoveredModel[]> => {
-		const fresh = await discoverModels(settings);
-		saveCache(fresh);
-		models = fresh;
-		registerProvider(fresh);
+		const found = await discoverAll(settings, settings.modelConfig ?? emptyModelConfig(), loadCache());
+		models = found.models;
+		serverIssues = found.issues;
+		registerProvider(models);
+		// The default server being down is still a failure to the callers
+		// (startup, autostart, /ollama-refresh) - but by now its cached models
+		// and any reachable pinned ones are registered.
+		if (found.defaultError !== undefined) throw found.defaultError;
+		saveCache(models);
 		ready.markReady();
-		return fresh;
+		return models;
 	};
 
 	// Discovery's per-request timeouts bound this wait. If Ollama can't be
@@ -196,8 +204,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		await refreshModels();
 	} catch (e) {
 		startupFailure = e;
-		models = loadCache();
-		registerProvider(models);
+		// refreshModels already registered the fallback list.
 		process.stderr.write(
 			models.length > 0
 				? `[pi-ollama] Ollama not reachable (${String(e)}). ` +
@@ -221,7 +228,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
 	({ preloadNow } = registerWarmup(pi, settings, { whenReady: ready.whenReady }));
 	registerRelease(pi, settings);
-	registerConfigReporting(pi, () => settings.configIssues ?? []);
+	registerConfigReporting(pi, () => [...(settings.configIssues ?? []), ...serverIssues]);
 }
 
 // ============================================================================
@@ -251,7 +258,8 @@ export function toProviderModel(
 		id: m.id,
 		name: m.name,
 		api: "ollama-native",
-		baseUrl: settings.baseUrl,
+		// A model pinned to a named server carries that server's address.
+		baseUrl: m.baseUrl ?? settings.baseUrl,
 		reasoning: m.reasoning,
 		...(thinkingLevelMap && { thinkingLevelMap }),
 		input: m.vision ? ["text", "image"] : ["text"],

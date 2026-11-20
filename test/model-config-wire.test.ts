@@ -60,3 +60,31 @@ describe("per-model keep_alive reaches the request", () => {
 		expect("keep_alive" in requests[0]!).toBe(false);
 	});
 });
+
+describe("a model pinned to a named server", () => {
+	it("is sent to that server, without the default server's API key", async () => {
+		const seen: Array<{ url: string; auth: string | null }> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string, init: RequestInit) => {
+				seen.push({ url, auth: new Headers(init.headers).get("Authorization") });
+				return ndjsonResponse([textChunk("ok"), doneChunk(1, 1e6)]);
+			}),
+		);
+		const withKey = { apiKey: "sk-home", apiKeyStatus: "approved" as const };
+
+		await runStream({ messages: [{ role: "user", content: "hello", timestamp: 1 }] }, undefined, {
+			model: { id: "gemma4:12b", api: "ollama-native", provider: "ollama", baseUrl: "http://10.0.0.5:11434" },
+			settings: withKey,
+		});
+		await runStream({ messages: [{ role: "user", content: "hello", timestamp: 1 }] }, undefined, {
+			model: { id: "gemma4:e4b", api: "ollama-native", provider: "ollama" },
+			settings: withKey,
+		});
+
+		expect(seen).toEqual([
+			{ url: "http://10.0.0.5:11434/api/chat", auth: null },
+			{ url: "http://ollama.test/api/chat", auth: "Bearer sk-home" },
+		]);
+	});
+});

@@ -66,7 +66,9 @@ function formatModelRow(m: DiscoveredModel): string {
 	const flags = [m.tools && "tools", m.vision && "vision", m.reasoning && "reasoning"]
 		.filter(Boolean)
 		.join(", ");
-	return `${m.id.padEnd(32)} ctx:${m.contextWindow.toLocaleString()}  [${flags || "basic"}]`;
+	// A model pinned to a named server says which one; the rest are on the default server.
+	const server = m.baseUrl ? `  @ ${m.baseUrl}` : "";
+	return `${m.id.padEnd(32)} ctx:${m.contextWindow.toLocaleString()}  [${flags || "basic"}]${server}`;
 }
 
 // Called from index.ts to register all commands.

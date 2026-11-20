@@ -276,8 +276,33 @@ The key is the model's exact id, as `/ollama-status` lists it. A model's own val
 | `keepAlive` | a duration like `"10m"` or `"1h30m"`, or whole seconds (`-1` is Never sleep) | Idle Timeout for this model |
 | `warm` | `true` or `false` | Preload on Select for this model |
 | `releaseAfter` | `0`, a duration like `"10m"`, whole seconds, or `"keep"` | Unload on Swap or Exit for this model: `0` is Immediate, a duration is After that long, `"keep"` is Never unload |
+| `server` | the name of an entry in `servers` | The Ollama server this model is on (see below) |
 
 Restart pi after editing the file. Any key that starts with `_` is ignored, which gives you somewhere to leave yourself a note.
+
+### Models on another Ollama server
+
+A model can live on a different Ollama from the one `OLLAMA_HOST` points at. Name the server once under `servers`, then pin models to it:
+
+```json
+{
+  "servers": {
+    "jetson": { "host": "10.0.0.5:11434" }
+  },
+  "models": {
+    "gemma4:12b": { "server": "jetson" }
+  }
+}
+```
+
+The pinned model shows up in pi's model list next to your local ones, and its requests go to that server. `/ollama-status` marks it with the server's address.
+
+- `host` takes what `OLLAMA_HOST` takes: a bare host, `host:port`, or a full `http://` or `https://` URL, which can include a reverse-proxy path. A bare host gets Ollama's port, 11434.
+- An address with a username and password in it, a query string or a fragment is refused.
+- Only the models you pin are looked up on a named server. pi-ollama doesn't list everything that server has.
+- If a pinned model has the same id as a local one, the pinned one is used.
+- `OLLAMA_API_KEY` is never sent to a named server. It belongs to the `OLLAMA_HOST` server it was approved for.
+- If a named server can't be reached at startup, pi says so and uses what it last knew about that model. If your main server is the one that's down, the pinned models still load.
 
 The file is checked when pi starts. A value that doesn't make sense is left out and pi tells you which one and why, so a typo doesn't quietly do nothing. If the file can't be read at all (a stray comma is the usual cause), pi-ollama runs on its defaults and the slash commands refuse to save until you fix it, so they can't overwrite what you wrote.
 

@@ -132,6 +132,16 @@ describe("/ollama-status", () => {
 		);
 	});
 
+	it("shows which server a pinned model is on", async () => {
+		stubServer(async () => Response.json({ models: [] }));
+		const pinned = { ...gemma, id: "gemma4:12b", baseUrl: "http://10.0.0.5:11434" };
+
+		const { text } = await command("ollama-status", [gemma, pinned])();
+
+		expect(text).toMatch(/gemma4:12b .*\]  @ http:\/\/10\.0\.0\.5:11434$/m);
+		expect(text).toMatch(/gemma4:26b .*\]$/m);
+	});
+
 	it("reports an error when there's no Ollama to talk to", async () => {
 		stubServer(async () => {
 			throw new TypeError("fetch failed");

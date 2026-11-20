@@ -32,15 +32,28 @@ export interface ModelSettings {
 	 * it at once, a duration that long after, "keep" leaves it loaded.
 	 */
 	releaseAfter?: string | number;
+	/** Name of a `servers` entry this model lives on. Absent = the default server. */
+	server?: string;
+}
+
+/** An Ollama other than the default one, that models can be pinned to. */
+export interface ServerEntry {
+	/** Normalized: scheme and port filled in, no trailing slash. */
+	baseUrl: string;
 }
 
 export interface ModelConfigFile {
 	/** Null-prototype map, so ids like "__proto__" are plain entries. */
 	models: Record<string, ModelSettings>;
+	/** Named servers, by name. Null-prototype map. */
+	servers: Record<string, ServerEntry>;
 }
 
 export function emptyModelConfig(): ModelConfigFile {
-	return { models: Object.create(null) as Record<string, ModelSettings> };
+	return {
+		models: Object.create(null) as Record<string, ModelSettings>,
+		servers: Object.create(null) as Record<string, ServerEntry>,
+	};
 }
 
 // ── validators: return why a value is invalid, or undefined when it's fine ──
@@ -75,11 +88,46 @@ export const releaseAfterCheck: Check = (v) => {
 	return 'must be 0 (unload at once), a duration like "10m" / "1h30m", a whole number of seconds, or "keep" (don\'t unload it for leaving)';
 };
 
-const MODEL_FIELDS: Record<keyof ModelSettings, Check> = {
+/** `server` is checked against the servers block, which needs more than the value. */
+const MODEL_FIELDS: Record<Exclude<keyof ModelSettings, "server">, Check> = {
 	keepAlive: keepAliveCheck,
 	warm: bool,
 	releaseAfter: releaseAfterCheck,
 };
+
+/** Ollama's own default port, used when a host gives neither a scheme nor a port. */
+const OLLAMA_PORT = 11434;
+
+/**
+ * A server address as a base URL, or why it can't be used. Accepts what
+ * OLLAMA_HOST accepts ("host", "host:port", or a full http(s) URL, which may
+ * carry a reverse-proxy path). Refuses anything that could send requests, or
+ * a secret, somewhere unintended: other protocols, embedded credentials, a
+ * query or a fragment. The reason never repeats the value, since the value
+ * may contain a password.
+ */
+export function normalizeServerHost(raw: unknown): { baseUrl: string } | { reason: string } {
+	if (typeof raw !== "string" || raw.trim() === "") {
+		return { reason: 'must be an address like "10.0.0.5:11434" or "https://ollama.home"' };
+	}
+	const text = raw.trim();
+	if (/\s/.test(text)) return { reason: "must not contain spaces" };
+	const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
+	let url: URL;
+	try {
+		url = new URL(hasScheme ? text : `http://${text}`);
+	} catch {
+		return { reason: 'must be an address like "10.0.0.5:11434" or "https://ollama.home"' };
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:") {
+		return { reason: "must use http:// or https://" };
+	}
+	if (url.username || url.password) return { reason: "must not contain a username or password" };
+	if (url.search || url.hash) return { reason: "must not contain a query or a fragment" };
+	// A bare host means "Ollama on that machine": its port, not the web's.
+	if (!hasScheme && url.port === "") url.port = String(OLLAMA_PORT);
+	return { baseUrl: url.toString().replace(/\/+$/, "") };
+}
 
 const USE_MODEL_OVERRIDES = (field: string) =>
 	`is not set here - use modelOverrides in pi's models.json ("${field}") - ignored`;
@@ -99,13 +147,37 @@ const ELSEWHERE: Record<string, string> = {
 const show = (v: unknown): string => JSON.stringify(v) ?? String(v);
 const own = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key);
 
-function validateModel(raw: Record<string, unknown>, path: string, issues: ConfigIssue[]): ModelSettings {
+function validateModel(
+	raw: Record<string, unknown>,
+	path: string,
+	servers: Record<string, ServerEntry>,
+	issues: ConfigIssue[],
+): ModelSettings {
 	const out: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(raw)) {
 		if (key.startsWith("_")) continue;
 		const keyPath = `${path}.${key}`;
+		if (key === "server") {
+			if (typeof value !== "string" || value === "") {
+				issues.push({
+					severity: "error",
+					path: keyPath,
+					message: `= ${show(value)} must be the name of an entry in servers - ignored`,
+				});
+			} else if (!own(servers, value)) {
+				const defined = Object.keys(servers);
+				issues.push({
+					severity: "error",
+					path: keyPath,
+					message: `= ${show(value)} is not one of the servers defined (${defined.length ? defined.join(", ") : "none are"}) - using the default server`,
+				});
+			} else {
+				out[key] = value;
+			}
+			continue;
+		}
 		if (own(MODEL_FIELDS, key)) {
-			const reason = MODEL_FIELDS[key as keyof ModelSettings](value);
+			const reason = MODEL_FIELDS[key as keyof typeof MODEL_FIELDS](value);
 			if (reason) {
 				issues.push({ severity: "error", path: keyPath, message: `= ${show(value)} ${reason} - ignored` });
 			} else {
@@ -122,16 +194,54 @@ function validateModel(raw: Record<string, unknown>, path: string, issues: Confi
 	return out as ModelSettings;
 }
 
+function validateServers(raw: unknown, issues: ConfigIssue[]): Record<string, ServerEntry> {
+	const out = Object.create(null) as Record<string, ServerEntry>;
+	if (raw === undefined) return out;
+	if (!isObject(raw)) {
+		issues.push({ severity: "error", path: "servers", message: `= ${show(raw)} must be an object - ignored` });
+		return out;
+	}
+	for (const [name, entry] of Object.entries(raw)) {
+		if (name.startsWith("_")) continue;
+		const path = `servers[${JSON.stringify(name)}]`;
+		if (!isObject(entry)) {
+			issues.push({
+				severity: "error",
+				path,
+				message: `= ${show(entry)} must be an object like { "host": "10.0.0.5:${OLLAMA_PORT}" } - ignored`,
+			});
+			continue;
+		}
+		const host = normalizeServerHost(entry.host);
+		if ("reason" in host) {
+			// The value is left out on purpose: it may hold a password.
+			issues.push({ severity: "error", path: `${path}.host`, message: `${host.reason} - server ignored` });
+			continue;
+		}
+		for (const key of Object.keys(entry)) {
+			if (key !== "host" && !key.startsWith("_")) {
+				issues.push({ severity: "warning", path: `${path}.${key}`, message: "is not a known setting - ignored" });
+			}
+		}
+		out[name] = host;
+	}
+	return out;
+}
+
 /**
- * Validate the per-model part of the parsed config file. Invalid values are
- * dropped and reported as errors, so they fall through to the global setting;
- * unknown keys are warnings. The file's other keys belong to settings.ts.
+ * Validate the `servers` and `models` blocks of the parsed config file.
+ * Invalid values are dropped and reported as errors, so they fall through to
+ * the global setting or the default server; unknown keys are warnings. The
+ * file's other keys belong to settings.ts.
  */
 export function loadModelConfig(raw: unknown): { config: ModelConfigFile; issues: ConfigIssue[] } {
 	const issues: ConfigIssue[] = [];
 	const config = emptyModelConfig();
-	if (!isObject(raw) || raw.models === undefined) return { config, issues };
+	if (!isObject(raw)) return { config, issues };
 
+	config.servers = validateServers(raw.servers, issues);
+
+	if (raw.models === undefined) return { config, issues };
 	if (!isObject(raw.models)) {
 		issues.push({ severity: "error", path: "models", message: `= ${show(raw.models)} must be an object - ignored` });
 		return { config, issues };
@@ -143,9 +253,16 @@ export function loadModelConfig(raw: unknown): { config: ModelConfigFile; issues
 			issues.push({ severity: "error", path, message: `= ${show(entry)} must be an object - ignored` });
 			continue;
 		}
-		config.models[id] = validateModel(entry, path, issues);
+		config.models[id] = validateModel(entry, path, config.servers, issues);
 	}
 	return { config, issues };
+}
+
+/** The base URL of the server a model is pinned to, or undefined for the default server. */
+export function serverUrlFor(config: ModelConfigFile | undefined, modelId: string): string | undefined {
+	if (!config || !own(config.models, modelId)) return undefined;
+	const name = config.models[modelId]?.server;
+	return name !== undefined && own(config.servers, name) ? config.servers[name]?.baseUrl : undefined;
 }
 
 // ── resolving ──

@@ -43,4 +43,9 @@ describe("per-model context maximum", () => {
   const fromOldCache = JSON.parse(JSON.stringify(guessed())) as DiscoveredModel;
   expect(toProviderModel(fromOldCache, settings).contextWindow).toBe(262144);
  });
+ it("registers a model pinned to a named server with that server's address", () => {
+  const pinned = {...model(32768), baseUrl: "http://10.0.0.5:11434"};
+  expect(toProviderModel(pinned, settings).baseUrl).toBe("http://10.0.0.5:11434");
+  expect(toProviderModel(model(32768), settings).baseUrl).toBe("http://localhost:11434");
+ });
 });
