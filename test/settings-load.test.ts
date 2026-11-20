@@ -4,8 +4,10 @@ import type { PersistedConfig } from "../src/config.js";
 // loadSettings reads the environment and the persisted config. The config
 // module is mocked so these never touch the real ~/.pi file.
 const persisted: PersistedConfig = {};
+let fileProblem: string | undefined;
 vi.mock("../src/config.js", () => ({
 	loadPersistedConfig: () => persisted,
+	persistedConfigProblem: () => fileProblem,
 	savePersistedConfig: () => undefined,
 }));
 
@@ -13,6 +15,7 @@ const { keyFingerprint, loadSettings } = await import("../src/settings.js");
 
 afterEach(() => {
 	vi.unstubAllEnvs();
+	fileProblem = undefined;
 	for (const k of Object.keys(persisted)) delete persisted[k as keyof PersistedConfig];
 });
 
@@ -54,6 +57,19 @@ describe("loadSettings - per-model settings from the config file", () => {
 
 		expect(settings.modelConfig?.models["gemma4:12b"]).toEqual({ keepAlive: -1 });
 		expect(settings.configIssues?.map((i) => i.path)).toEqual(['models["gemma4:12b"].warm']);
+	});
+
+	it("reports a config file that couldn't be read at all", () => {
+		fileProblem = "Unexpected token } in JSON at position 52";
+
+		expect(loadSettings().configIssues).toEqual([
+			{
+				severity: "error",
+				path: "pi-ollama-config.json",
+				message:
+					"couldn't be read (Unexpected token } in JSON at position 52) - using defaults until it is fixed",
+			},
+		]);
 	});
 
 	it("has nothing to report for a file without one", () => {

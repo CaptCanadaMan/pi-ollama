@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { cachePath } from "./paths.js";
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import { dbg } from "./debug.js";
 import type { DiscoveredModel } from "./discovery.js";
@@ -52,11 +53,11 @@ function isLoopbackUrl(baseUrl: string): boolean {
 	return host === "localhost" || host === "[::1]" || host === "0.0.0.0" || host.startsWith("127.");
 }
 
-/** Save the choice, keeping everything else in the config file. */
-function remember(choice: "always" | "never"): void {
+/** Save the choice, keeping everything else in the config file. Returns why it couldn't, if so. */
+function remember(choice: "always" | "never"): string | undefined {
 	const config = loadPersistedConfig();
 	config.autostart = choice;
-	savePersistedConfig(config);
+	return savePersistedConfig(config);
 }
 
 /** Starting and watching the server - the process boundary, passed in so tests can fake it. */
@@ -100,7 +101,7 @@ export function registerAutostart(
 		if (preference === "never") {
 			ctx.ui.notify(
 				`Ollama isn't running at ${settings.baseUrl}. Auto-start is off - remove "autostart" ` +
-					`from ~/.pi/agent/cache/pi-ollama-config.json to be asked again.`,
+					`from ${cachePath("pi-ollama-config.json")} to be asked again.`,
 				"info",
 			);
 			return;
@@ -116,8 +117,10 @@ export function registerAutostart(
 					NEVER,
 				],
 			);
-			if (answer === ALWAYS) remember("always");
-			if (answer === NEVER) remember("never");
+			// The answer still holds for this session even if it can't be saved.
+			const unsaved =
+				answer === ALWAYS ? remember("always") : answer === NEVER ? remember("never") : undefined;
+			if (unsaved) ctx.ui.notify(`Your choice wasn't saved: ${unsaved}`, "warning");
 			if (answer !== START_NOW && answer !== ALWAYS) return;
 		}
 
@@ -247,7 +250,7 @@ export function createOllamaLauncher(
 		};
 	}
 
-	const logPath = join(homedir(), ".pi", "agent", "cache", "pi-ollama-serve.log");
+	const logPath = cachePath("pi-ollama-serve.log");
 	return {
 		description: "Start a background ollama serve? It keeps running after pi exits.",
 		manualHint:

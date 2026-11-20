@@ -35,7 +35,9 @@ export function registerApiKeyApproval(
 
 		const config = loadPersistedConfig();
 		config.apiKeyApproval = { host: settings.baseUrl, fingerprint: keyFingerprint(key) };
-		savePersistedConfig(config);
+		const unsaved = savePersistedConfig(config);
+		// Approved for this session either way; unsaved means pi asks again next time.
+		if (unsaved) ctx.ui.notify(`The approval wasn't saved: ${unsaved}`, "warning");
 
 		settings.apiKey = key;
 		settings.apiKeyStatus = "approved";

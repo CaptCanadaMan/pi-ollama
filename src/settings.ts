@@ -20,7 +20,7 @@
 //                                Superseded by /ollama-warm-up's saved choice.
 
 import { createHash } from "node:crypto";
-import { type ApiKeyApproval, loadPersistedConfig } from "./config.js";
+import { type ApiKeyApproval, loadPersistedConfig, persistedConfigProblem } from "./config.js";
 import { type ConfigIssue, loadModelConfig, type ModelConfigFile } from "./model-config.js";
 
 export interface OllamaExtensionSettings {
@@ -171,6 +171,14 @@ export function loadSettings(): OllamaExtensionSettings {
 	})();
 	const contextLength = persistedContextLength ?? envContextLength;
 	const { config: modelConfig, issues: configIssues } = loadModelConfig(persisted);
+	const fileProblem = persistedConfigProblem();
+	if (fileProblem) {
+		configIssues.unshift({
+			severity: "error",
+			path: "pi-ollama-config.json",
+			message: `couldn't be read (${fileProblem}) - using defaults until it is fixed`,
+		});
+	}
 
 	return {
 		modelConfig,

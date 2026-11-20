@@ -13,21 +13,14 @@
 // giving full diagnostics — `tail -f $OLLAMA_NATIVE_DEBUG_LOG` for live view.
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { cachePath } from "./paths.js";
 
 export const OLLAMA_DEBUG = process.env.OLLAMA_NATIVE_DEBUG === "1";
 export const OLLAMA_DUMP_DIR = process.env.OLLAMA_NATIVE_DUMP_DIR;
 
-const DEFAULT_LOG_PATH = join(
-	homedir(),
-	".pi",
-	"agent",
-	"cache",
-	"pi-ollama-debug.log",
-);
 export const OLLAMA_DEBUG_LOG =
-	process.env.OLLAMA_NATIVE_DEBUG_LOG ?? DEFAULT_LOG_PATH;
+	process.env.OLLAMA_NATIVE_DEBUG_LOG ?? cachePath("pi-ollama-debug.log");
 
 let dumpCounter = 0;
 let logDirReady = false;

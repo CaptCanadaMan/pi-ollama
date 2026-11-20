@@ -7,8 +7,7 @@
 // discovery itself has no side effects.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { cacheDir, cachePath } from "./paths.js";
 import { canChat, inferCapabilities } from "./capabilities.js";
 import {
 	listModels,
@@ -37,18 +36,12 @@ export interface DiscoveredModel {
 	maxTokens: number;
 }
 
-const CACHE_PATH = join(
-	homedir(),
-	".pi",
-	"agent",
-	"cache",
-	"pi-ollama-models.json",
-);
+const modelsCachePath = () => cachePath("pi-ollama-models.json");
 
 export function loadCache(): DiscoveredModel[] {
 	try {
-		if (!existsSync(CACHE_PATH)) return [];
-		return JSON.parse(readFileSync(CACHE_PATH, "utf-8")) as DiscoveredModel[];
+		if (!existsSync(modelsCachePath())) return [];
+		return JSON.parse(readFileSync(modelsCachePath(), "utf-8")) as DiscoveredModel[];
 	} catch {
 		return [];
 	}
@@ -58,8 +51,8 @@ export function loadCache(): DiscoveredModel[] {
 export function saveCache(models: DiscoveredModel[]): void {
 	if (models.length === 0) return;
 	try {
-		mkdirSync(join(homedir(), ".pi", "agent", "cache"), { recursive: true });
-		writeFileSync(CACHE_PATH, JSON.stringify(models, null, 2));
+		mkdirSync(cacheDir(), { recursive: true });
+		writeFileSync(modelsCachePath(), JSON.stringify(models, null, 2));
 	} catch {
 		// Non-fatal — cache write failures don't block usage.
 	}

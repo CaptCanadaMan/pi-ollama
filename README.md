@@ -195,7 +195,55 @@ It can't make the read itself any faster. If you send a message before the warm-
 ⠹ warming gemma4:12b · reading pi's prompt · 23s
 ```
 
+Switching models doesn't stack warm-ups. When you pick another model, the warm-up for the one you left is stopped, and the new one waits about a second before it starts, so cycling through the list with Ctrl+P only warms the model you land on. If the warm-up is what loaded a model and you never sent it anything, moving on unloads it again. A model that was already in memory, or one you've had a turn with, is left alone: how long those stay loaded is `keep_alive`'s business.
+
 Warm-up loads the model as soon as a session starts, which costs memory whether or not you use it. Turn it off with `/ollama-warm-up` (saved across launches) or `OLLAMA_NATIVE_WARM=0`.
+
+---
+
+## Per-model settings
+
+`/ollama-keep-alive` and `/ollama-warm-up` set one value for every model. If you switch between models that want different treatment - a small one you keep loaded all day, a big one you'd rather have unloaded when you're done - you can give a model its own values in pi-ollama's config file, `~/.pi/agent/cache/pi-ollama-config.json`. That's the same file the slash commands save to, so add a `models` block next to whatever is already there:
+
+```json
+{
+  "models": {
+    "gemma4:12b": { "keepAlive": -1 },
+    "muse-glimmer:30b": { "keepAlive": "10m", "warm": false }
+  }
+}
+```
+
+The key is the model's exact id, as `/ollama-status` lists it. A model's own value wins over the global one, and a model with no entry uses the global one as before.
+
+| Setting | Values | What it does |
+|---|---|---|
+| `keepAlive` | a duration like `"10m"` or `"1h30m"`, or whole seconds (`-1` keeps it loaded) | `keep_alive` for this model's requests |
+| `warm` | `true` or `false` | Whether this model is warmed up at session start and when you switch to it |
+
+Restart pi after editing the file. Any key that starts with `_` is ignored, which gives you somewhere to leave yourself a note.
+
+The file is checked when pi starts. A value that doesn't make sense is left out and pi tells you which one and why, so a typo doesn't quietly do nothing. If the file can't be read at all (a stray comma is the usual cause), pi-ollama runs on its defaults and the slash commands refuse to save until you fix it, so they can't overwrite what you wrote.
+
+Two things you might look for here live elsewhere. A per-model context window or output limit goes in pi's own `models.json`, which already handles it for extension models:
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "modelOverrides": {
+        "gemma4:e4b": { "contextWindow": 16384 }
+      }
+    }
+  }
+}
+```
+
+Sampling and GPU options (temperature, top_p, num_gpu and so on) belong in an Ollama Modelfile as `PARAMETER` lines. pi-ollama doesn't override them, so what the Modelfile says is what the model gets.
+
+Per-model settings came out of [TRex22](https://github.com/TRex22)'s work in [#14](https://github.com/CaptCanadaMan/pi-ollama/pull/14).
+
+If you've moved pi's agent directory with `PI_CODING_AGENT_DIR`, the config file, the model cache and the debug log move with it.
 
 ---
 

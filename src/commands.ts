@@ -279,7 +279,11 @@ export function registerCommands(
 			} else {
 				persisted.contextLength = newValue;
 			}
-			savePersistedConfig(persisted);
+			const unsaved = savePersistedConfig(persisted);
+			if (unsaved) {
+				ctx.ui.notify(`Not changed: ${unsaved}`, "error");
+				return;
+			}
 			settings.contextLength = newValue;
 
 			// Re-register the provider so pi's model registry (and the UI
@@ -371,7 +375,11 @@ export function registerCommands(
 			} else {
 				persisted.keepAlive = newValue;
 			}
-			savePersistedConfig(persisted);
+			const unsaved = savePersistedConfig(persisted);
+			if (unsaved) {
+				ctx.ui.notify(`Not changed: ${unsaved}`, "error");
+				return;
+			}
 			settings.keepAlive = newValue;
 
 			if (newValue === undefined) {
