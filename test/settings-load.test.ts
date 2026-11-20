@@ -84,7 +84,7 @@ describe("loadSettings - the warm-up switch", () => {
 		expect(loadSettings().warm).toBe(false);
 	});
 
-	it("a choice saved by /ollama-warm-up wins over OLLAMA_NATIVE_WARM", () => {
+	it("a choice saved by /ollama-preload wins over OLLAMA_NATIVE_WARM", () => {
 		vi.stubEnv("OLLAMA_NATIVE_WARM", "0");
 		persisted.warm = true;
 		expect(loadSettings().warm).toBe(true);

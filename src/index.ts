@@ -9,7 +9,7 @@
 // Refresh:  /ollama-refresh
 // Status:   /ollama-status
 // Details:  /ollama-info <model-id>
-// Warm-up:  /ollama-warm-up
+// Loading:  /ollama-preload
 //
 // Environment variables:
 //   OLLAMA_HOST                  - Ollama server host[:port]. Default: localhost:11434
@@ -34,7 +34,7 @@ import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
 import { registerThroughputStatus, type StatusPi } from "./status.js";
 import { GenerationTelemetry } from "./telemetry.js";
 import { toThinkingLevelMap, type ThinkingLevelMap } from "./thinking.js";
-import { createReadySignal, registerWarmup } from "./warm.js";
+import { createReadySignal, registerWarmup, type Warmup } from "./warm.js";
 
 // ============================================================================
 // Minimal structural interfaces for the pi extension API.
@@ -207,14 +207,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 		);
 	}
 
-	registerCommands(pi, settings, () => models, refreshModels, registerProvider);
+	// /ollama-preload switches preloading on before the warm-up below exists.
+	let preloadNow: Warmup["preloadNow"] = () => undefined;
+	registerCommands(pi, settings, () => models, refreshModels, registerProvider, {
+		// pi hands the command its full context; the menu only declares the slice it reads.
+		preloadNow: (ctx) => preloadNow(ctx as Parameters<Warmup["preloadNow"]>[0]),
+	});
 	registerAutostart(pi, settings, {
 		refresh: refreshModels,
 		startupFailure,
 		launcher: createOllamaLauncher(settings),
 	});
 	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
-	registerWarmup(pi, settings, { whenReady: ready.whenReady });
+	({ preloadNow } = registerWarmup(pi, settings, { whenReady: ready.whenReady }));
 	registerRelease(pi, settings);
 	registerConfigReporting(pi, () => settings.configIssues ?? []);
 }

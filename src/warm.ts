@@ -8,7 +8,6 @@
 // turn only reads the user's message. On a pi that can't report its system
 // prompt, it falls back to loading the weights alone.
 
-import { loadPersistedConfig, savePersistedConfig } from "./config.js";
 import { dbg } from "./debug.js";
 import { errorText } from "./errors.js";
 import {
@@ -63,13 +62,6 @@ function startFooterTicker(ctx: StatusContext, label: string): () => void {
 	};
 }
 
-interface CommandContext extends WarmContext {
-	ui?: StatusContext["ui"] & {
-		select?(title: string, options: string[]): Promise<string | undefined>;
-		notify?(message: string, type?: "info" | "warning" | "error"): void;
-	};
-}
-
 interface Pi {
 	on?: (
 		event:
@@ -89,14 +81,7 @@ interface Pi {
 	) => void;
 	getAllTools?: () => ToolInfo[];
 	getActiveTools?: () => string[];
-	registerCommand?: (
-		name: string,
-		config: { description: string; handler: (args: string, ctx: CommandContext) => Promise<void> },
-	) => void;
 }
-
-const ON = "On (default)";
-const OFF = "Off";
 
 export interface WarmupDeps {
 	/** Resolves once Ollama has answered a refresh. */
@@ -110,11 +95,16 @@ export interface WarmupDeps {
 const WARM_TIMEOUT_MS = 600_000;
 const DEFAULT_SETTLE_MS = 2500;
 
+export interface Warmup {
+	/** Preload the model the user is on now, if preloading is on for it. */
+	preloadNow(ctx: WarmContext): void;
+}
+
 export function registerWarmup(
 	pi: Pi,
 	settings: OllamaExtensionSettings,
 	{ whenReady, settleMs = DEFAULT_SETTLE_MS }: WarmupDeps,
-): void {
+): Warmup {
 	// The model the user most recently landed on. A warm-up that was waiting
 	// for Ollama and has since been overtaken by a switch is dropped, so
 	// switching around before Ollama is up doesn't load several models.
@@ -225,7 +215,7 @@ export function registerWarmup(
 		}
 	};
 
-	// Resolved here, per request, so /ollama-warm-up takes effect at once. A
+	// Resolved here, per request, so /ollama-preload takes effect at once. A
 	// model's own `warm` in the config file wins over the global switch.
 	const request = (model: WarmModel | undefined, ctx: WarmContext, waitMs = 0) => {
 		if (model?.api !== "ollama-native") return;
@@ -254,33 +244,7 @@ export function registerWarmup(
 		request(ctx.model, { ...ctx, thinkingLevel: event.level }),
 	);
 
-	pi.registerCommand?.("ollama-warm-up", {
-		description:
-			"Turn model warm-up on or off: load the model at session start and on model switch. Persistent across restarts.",
-		handler: async (_args, ctx) => {
-			const choice = await ctx.ui?.select?.(
-				`Model warm-up - currently ${settings.warm ? "on" : "off"}`,
-				[ON, OFF],
-			);
-			if (!choice) return;
-			const on = choice === ON;
-			const config = loadPersistedConfig();
-			config.warm = on;
-			const unsaved = savePersistedConfig(config);
-			if (unsaved) {
-				ctx.ui?.notify?.(`Not changed: ${unsaved}`, "error");
-				return;
-			}
-			settings.warm = on;
-			ctx.ui?.notify?.(
-				on
-					? "Model warm-up on: the model loads at session start and on switch. Persists across pi launches."
-					: "Model warm-up off: the first turn loads the model. Persists across pi launches.",
-				"info",
-			);
-			request(ctx.model, ctx);
-		},
-	});
+	return { preloadNow: (ctx) => request(ctx.model, ctx) };
 }
 
 /**

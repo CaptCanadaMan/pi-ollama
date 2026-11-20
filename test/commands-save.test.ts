@@ -51,35 +51,6 @@ const freshSettings = (): OllamaExtensionSettings => ({
 	apiKeyStatus: "none",
 });
 
-describe("/ollama-keep-alive", () => {
-	it("saves the choice and leaves hand-written per-model settings in place", async () => {
-		writeRaw('{ "models": { "gemma4:12b": { "warm": false } } }');
-		const settings = freshSettings();
-
-		const { level } = await run("ollama-keep-alive", "30m", settings);
-
-		expect(level).toBe("info");
-		expect(settings.keepAlive).toBe("30m");
-		expect(JSON.parse(readFileSync(configFile(), "utf-8"))).toEqual({
-			keepAlive: "30m",
-			models: { "gemma4:12b": { warm: false } },
-		});
-	});
-
-	it("changes nothing, and says why, when the config file can't be read", async () => {
-		const broken = '{ "models": { "gemma4:12b": { "warm": false }, } }';
-		writeRaw(broken);
-		const settings = freshSettings();
-
-		const { text, level } = await run("ollama-keep-alive", "30m", settings);
-
-		expect(level).toBe("error");
-		expect(text).toMatch(/^Not changed: pi-ollama-config\.json couldn't be read/);
-		expect(settings.keepAlive).toBeUndefined();
-		expect(readFileSync(configFile(), "utf-8")).toBe(broken);
-	});
-});
-
 describe("/ollama-context", () => {
 	it("changes nothing when the config file can't be read", async () => {
 		const broken = "{ not json";

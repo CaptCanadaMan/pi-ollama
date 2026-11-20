@@ -17,7 +17,7 @@
 //                                off / no to switch the whole feature off.
 // OLLAMA_NATIVE_WARM          — load the model at session start / model switch
 //                                (warm.ts). On by default; same off values.
-//                                Superseded by /ollama-warm-up's saved choice.
+//                                Superseded by /ollama-preload's saved choice.
 
 import { createHash } from "node:crypto";
 import { type ApiKeyApproval, loadPersistedConfig, persistedConfigProblem } from "./config.js";
@@ -33,7 +33,7 @@ export interface OllamaExtensionSettings {
 	baseUrl: string;
 	/**
 	 * keep_alive for /api/chat requests. Resolution order:
-	 *   1. Persisted config from `/ollama-keep-alive` slash command
+	 *   1. Persisted config from `/ollama-preload` (Idle Timeout)
 	 *   2. `OLLAMA_KEEP_ALIVE` env var
 	 *   3. undefined — the field is omitted; the Ollama server's own setting
 	 *      decides (the default, since a per-request value overrides the server).
@@ -62,8 +62,9 @@ export interface OllamaExtensionSettings {
 	warm: boolean;
 	/**
 	 * What happens to a model the user has used once they leave it (release.ts):
-	 * 0 unloads it at once, a duration gives it that long, undefined (default)
-	 * leaves it to keep_alive. Set by /ollama-release; mutable at runtime.
+	 * 0 or undefined (the default) unloads it at once, a duration gives it that
+	 * long, "keep" leaves it to keep_alive. Set by /ollama-preload; mutable
+	 * at runtime.
 	 */
 	releaseAfter?: string | number;
 	/**

@@ -113,12 +113,9 @@ describe("resolveModelSettings", () => {
 	});
 
 	it("uses the model's own value where it has one, the global one otherwise", () => {
-		const global = { keepAlive: "5m", warm: true };
-		expect(resolveModelSettings(config, global, "gemma4:12b")).toEqual({ keepAlive: -1, warm: true });
-		expect(resolveModelSettings(config, global, "muse-glimmer:30b")).toEqual({
-			keepAlive: "5m",
-			warm: false,
-		});
+		const global = { keepAlive: "5m", warm: true, releaseAfter: "10m" };
+		expect(resolveModelSettings(config, global, "gemma4:12b")).toEqual({ ...global, keepAlive: -1 });
+		expect(resolveModelSettings(config, global, "muse-glimmer:30b")).toEqual({ ...global, warm: false });
 		expect(resolveModelSettings(config, global, "gemma4:e4b")).toEqual(global);
 	});
 
@@ -131,6 +128,25 @@ describe("resolveModelSettings", () => {
 		expect(resolveModelSettings(undefined, { keepAlive: "5m", warm: false }, "gemma4:12b")).toEqual({
 			keepAlive: "5m",
 			warm: false,
+			releaseAfter: 0,
 		});
+	});
+
+	it("unloads a model when the user leaves it unless told otherwise, per model or globally", () => {
+		const { config: withOwn, issues } = loadModelConfig({
+			models: { "gemma4:12b": { releaseAfter: "keep" }, "gemma4:31b": { releaseAfter: "5m" } },
+		});
+
+		expect(issues).toEqual([]);
+		expect(resolveModelSettings(withOwn, { warm: true }, "gemma4:e4b").releaseAfter).toBe(0);
+		expect(resolveModelSettings(withOwn, { warm: true }, "gemma4:12b").releaseAfter).toBe("keep");
+		expect(resolveModelSettings(withOwn, { warm: true, releaseAfter: "keep" }, "gemma4:31b").releaseAfter).toBe("5m");
+	});
+
+	it("rejects a releaseAfter that isn't a time, 0 or keep", () => {
+		const { config: bad, issues } = loadModelConfig({ models: { "gemma4:12b": { releaseAfter: -1 } } });
+
+		expect(bad.models["gemma4:12b"]).toEqual({});
+		expect(issues[0]?.path).toBe('models["gemma4:12b"].releaseAfter');
 	});
 });

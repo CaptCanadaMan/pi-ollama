@@ -1,5 +1,5 @@
 // Extension commands: /ollama-status, /ollama-refresh, /ollama-info,
-// /ollama-context, /ollama-keep-alive, /ollama-stats
+// /ollama-context, /ollama-preload, /ollama-stats
 //
 // Output is delivered via ctx.ui.notify() — the TUI-aware notification API
 // from pi's ExtensionCommandContext. Direct console.log to stdout corrupts
@@ -8,11 +8,11 @@
 // cleanly with the TUI regardless of when it fires.
 
 import { loadPersistedConfig, savePersistedConfig } from "./config.js";
-import { describeRelease } from "./release.js";
 import type { DiscoveredModel } from "./discovery.js";
 import { errorText } from "./errors.js";
+import { loadingRows, type PreloadCommandHooks, registerPreloadCommand } from "./preload-command.js";
 import { listModels, runningModels, showModel } from "./ollama-client.js";
-import { type ApiKeyStatus, parseKeepAlive, type OllamaExtensionSettings } from "./settings.js";
+import type { ApiKeyStatus, OllamaExtensionSettings } from "./settings.js";
 import {
 	formatSessionStats,
 	readGenerationRecords,
@@ -78,6 +78,7 @@ export function registerCommands(
 	getModels: () => DiscoveredModel[],
 	refresh: () => Promise<DiscoveredModel[]>,
 	reregisterProvider: (models: DiscoveredModel[]) => void,
+	hooks: PreloadCommandHooks = {},
 ): void {
 	pi.registerCommand("ollama-status", {
 		description: "Show Ollama connection status and currently loaded models",
@@ -85,15 +86,8 @@ export function registerCommands(
 			const baseUrl = settings.baseUrl;
 			const lines: string[] = [];
 			lines.push(`Ollama base URL: ${baseUrl}`);
-			lines.push(
-				settings.keepAlive !== undefined
-					? `keep_alive: ${settings.keepAlive} (override — sent on every request)`
-					: "keep_alive: defer to server (default)",
-			);
-			lines.push(`Warm-up: ${settings.warm ? "on" : "off"} (/ollama-warm-up to change)`);
-			lines.push(
-				`A model you've used is ${describeRelease(settings.releaseAfter)} (/ollama-release to change)`,
-			);
+			lines.push("Model loading (/ollama-preload to change):");
+			for (const row of loadingRows(settings)) lines.push(`  ${row}`);
 			const keyLine = API_KEY_STATUS_LINES[settings.apiKeyStatus];
 			if (keyLine) lines.push(keyLine);
 			if (settings.startedOllamaStopHint) {
@@ -310,95 +304,7 @@ export function registerCommands(
 		},
 	});
 
-	pi.registerCommand("ollama-keep-alive", {
-		description:
-			"Set the keep_alive pi-ollama sends to /api/chat. Default: defer to the Ollama server's setting. Persistent across restarts.",
-		handler: async (_args, ctx) => {
-			const DEFER = "Defer to the Ollama server's setting (default)";
-			const PRESETS: Array<{ label: string; value: string | number }> = [
-				{ label: "-1 (keep the model loaded forever)", value: -1 },
-				{ label: "5m (Ollama's factory default)", value: "5m" },
-				{ label: "30m", value: "30m" },
-				{ label: "1h", value: "1h" },
-			];
-			const CUSTOM = "Custom value…";
-
-			const current = settings.keepAlive;
-			const currentNote =
-				current !== undefined
-					? `Current override: ${current}`
-					: "Current: defer to server (no override sent)";
-
-			const selected = await ctx.ui.select(
-				`keep_alive for /api/chat — ${currentNote}`,
-				[DEFER, ...PRESETS.map((p) => p.label), CUSTOM],
-			);
-			if (!selected) {
-				// User cancelled — quiet exit.
-				return;
-			}
-
-			let newValue: string | number | undefined;
-
-			if (selected === DEFER) {
-				newValue = undefined;
-			} else if (selected === CUSTOM) {
-				const raw = await ctx.ui.input(
-					"Enter keep_alive",
-					'e.g., "10m", "1h30m", or -1 to keep loaded forever',
-				);
-				if (!raw) {
-					// User cancelled the input — quiet exit.
-					return;
-				}
-				const parsed = parseKeepAlive(raw);
-				if (parsed === undefined) {
-					ctx.ui.notify(
-						'Invalid keep_alive. Use a duration like "5m" / "1h30m" or an integer (seconds; -1 = forever).',
-						"error",
-					);
-					return;
-				}
-				newValue = parsed;
-			} else {
-				const matched = PRESETS.find((p) => p.label === selected);
-				if (!matched) {
-					ctx.ui.notify("Unrecognized selection.", "error");
-					return;
-				}
-				newValue = matched.value;
-			}
-
-			// Persist to disk AND mutate the shared settings object so the
-			// next /api/chat request picks up the new value without a relaunch.
-			// (No provider re-registration needed — keep_alive doesn't affect
-			// the model registry, unlike /ollama-context.)
-			const persisted = loadPersistedConfig();
-			if (newValue === undefined) {
-				delete persisted.keepAlive;
-			} else {
-				persisted.keepAlive = newValue;
-			}
-			const unsaved = savePersistedConfig(persisted);
-			if (unsaved) {
-				ctx.ui.notify(`Not changed: ${unsaved}`, "error");
-				return;
-			}
-			settings.keepAlive = newValue;
-
-			if (newValue === undefined) {
-				ctx.ui.notify(
-					"keep_alive override cleared. The field is omitted from requests — the Ollama server's own setting (OLLAMA_KEEP_ALIVE) decides.",
-					"info",
-				);
-			} else {
-				ctx.ui.notify(
-					`keep_alive set to ${newValue}. Applies to the next /api/chat request and persists across pi launches. Note: this OVERRIDES the server's OLLAMA_KEEP_ALIVE.`,
-					"info",
-				);
-			}
-		},
-	});
+	registerPreloadCommand(pi, settings, hooks);
 
 	pi.registerCommand("ollama-stats", {
 		description: "Show tok/s throughput for this session's Ollama generations",

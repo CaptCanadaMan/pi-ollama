@@ -27,7 +27,10 @@ export interface ConfigIssue {
 export interface ModelSettings {
 	keepAlive?: string | number;
 	warm?: boolean;
-	/** How long the model stays loaded after the user leaves it (release.ts). 0 = unload at once. */
+	/**
+	 * What happens to the model once the user leaves it (release.ts): 0 unloads
+	 * it at once, a duration that long after, "keep" leaves it loaded.
+	 */
 	releaseAfter?: string | number;
 }
 
@@ -60,14 +63,16 @@ const keepAliveCheck: Check = (v) => {
 };
 
 /**
- * Why a releaseAfter value is invalid, or undefined when it's fine. Unlike
- * keep_alive there is no "forever" here: leaving the setting out is how you
- * say "don't release". Shared with the global setting (settings.ts, release.ts).
+ * Why a releaseAfter value is invalid, or undefined when it's fine. "keep"
+ * means leaving the model doesn't unload it; it has to be said explicitly
+ * because unloading at once is the default. Shared with the global setting
+ * (settings.ts, keep-alive-command.ts).
  */
 export const releaseAfterCheck: Check = (v) => {
+	if (v === "keep") return undefined;
 	if (typeof v === "number" && Number.isInteger(v) && v >= 0) return undefined;
 	if (typeof v === "string" && GO_DURATION_RE.test(v)) return undefined;
-	return 'must be 0 (unload at once), a duration like "10m" / "1h30m", or a whole number of seconds';
+	return 'must be 0 (unload at once), a duration like "10m" / "1h30m", a whole number of seconds, or "keep" (don\'t unload it for leaving)';
 };
 
 const MODEL_FIELDS: Record<keyof ModelSettings, Check> = {
@@ -156,9 +161,12 @@ export interface ResolvedModelSettings {
 	/** Absent means the field is left out of the request and the server decides. */
 	keepAlive?: string | number;
 	warm: boolean;
-	/** Absent means a model the user leaves is not released: keep_alive decides. */
-	releaseAfter?: string | number;
+	/** 0 = unload when the user leaves it (the default), a duration, or "keep". */
+	releaseAfter: string | number;
 }
+
+/** A used model is unloaded as soon as the user leaves it, unless they chose otherwise. */
+export const DEFAULT_RELEASE_AFTER = 0;
 
 /** One model's effective settings: its own entry, else the global value. */
 export function resolveModelSettings(
@@ -169,11 +177,10 @@ export function resolveModelSettings(
 	const entry: ModelSettings =
 		config && modelId !== undefined && own(config.models, modelId) ? (config.models[modelId] ?? {}) : {};
 	const keepAlive = entry.keepAlive ?? global.keepAlive;
-	const releaseAfter = entry.releaseAfter ?? global.releaseAfter;
 	return {
 		...(keepAlive !== undefined && { keepAlive }),
 		warm: entry.warm ?? global.warm,
-		...(releaseAfter !== undefined && { releaseAfter }),
+		releaseAfter: entry.releaseAfter ?? global.releaseAfter ?? DEFAULT_RELEASE_AFTER,
 	};
 }
 

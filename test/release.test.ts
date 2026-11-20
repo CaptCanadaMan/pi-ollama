@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PersistedConfig } from "../src/config.js";
 
-// The config module is mocked so /ollama-release never touches the real ~/.pi file.
+// The config module is mocked so nothing here touches the real ~/.pi file.
 let saved: PersistedConfig | undefined;
 let refusal: string | undefined;
 vi.mock("../src/config.js", () => ({
@@ -62,10 +62,6 @@ function setup(overrides: object = {}, settleMs = 0) {
 		turnEnded: (m: { id: string; api: string }) =>
 			handlers.get("message_end")?.({ message: { role: "assistant", api: m.api, model: m.id } }, { model: m }),
 		quit: () => handlers.get("session_shutdown")?.({}, {}),
-		releaseCommand: (answer: string | undefined, typed?: string) =>
-			commands.get("ollama-release")?.("", {
-				ui: { notify, select: async () => answer, input: async () => typed },
-			}),
 	};
 }
 
@@ -78,9 +74,21 @@ afterEach(() => {
 });
 
 describe("leaving a model you've used", () => {
-	it("does nothing by default: keep_alive decides how long it stays", async () => {
+	it("unloads it at once by default", async () => {
 		const sent = stubOllama();
-		const { sessionStart, turnEnded, selectModel, quit } = setup();
+		const { sessionStart, turnEnded, selectModel } = setup();
+
+		sessionStart(big);
+		turnEnded(big);
+		selectModel(small);
+
+		await vi.waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]).toEqual({ model: "gemma4:31b", messages: [], keep_alive: 0 });
+	});
+
+	it("does nothing when set to keep: keep_alive goes on deciding how long it stays", async () => {
+		const sent = stubOllama();
+		const { sessionStart, turnEnded, selectModel, quit } = setup({ releaseAfter: "keep" });
 
 		sessionStart(big);
 		turnEnded(big);
@@ -89,18 +97,6 @@ describe("leaving a model you've used", () => {
 		await quit();
 
 		expect(sent).toEqual([]);
-	});
-
-	it("unloads it at once when releaseAfter is 0", async () => {
-		const sent = stubOllama();
-		const { sessionStart, turnEnded, selectModel } = setup({ releaseAfter: 0 });
-
-		sessionStart(big);
-		turnEnded(big);
-		selectModel(small);
-
-		await vi.waitFor(() => expect(sent).toHaveLength(1));
-		expect(sent[0]).toEqual({ model: "gemma4:31b", messages: [], keep_alive: 0 });
 	});
 
 	it("gives it that long to live when releaseAfter is a duration", async () => {
@@ -155,7 +151,7 @@ describe("leaving a model you've used", () => {
 		const { config: modelConfig } = loadModelConfig({
 			models: { "gemma4:31b": { releaseAfter: 0 }, "gemma4:e4b": { releaseAfter: "1h" } },
 		});
-		const { sessionStart, turnEnded, selectModel } = setup({ modelConfig });
+		const { sessionStart, turnEnded, selectModel } = setup({ modelConfig, releaseAfter: "keep" });
 
 		sessionStart(big);
 		turnEnded(big);
@@ -197,60 +193,5 @@ describe("quitting pi", () => {
 		turnEnded(big);
 
 		await expect(quit()).resolves.toBeUndefined();
-	});
-});
-
-describe("/ollama-release", () => {
-	it("saves the choice and applies it from the next switch", async () => {
-		const sent = stubOllama();
-		const { live, releaseCommand, notify, sessionStart, turnEnded, selectModel } = setup();
-
-		await releaseCommand("As soon as I leave the model");
-		sessionStart(big);
-		turnEnded(big);
-		selectModel(small);
-
-		expect(saved).toEqual({ releaseAfter: 0 });
-		expect(live.releaseAfter).toBe(0);
-		expect(notify.mock.calls[0]?.[1]).toBe("info");
-		await vi.waitFor(() => expect(sent).toHaveLength(1));
-	});
-
-	it("takes a custom time", async () => {
-		const { live, releaseCommand } = setup();
-
-		await releaseCommand("Custom time…", "45m");
-
-		expect(saved).toEqual({ releaseAfter: "45m" });
-		expect(live.releaseAfter).toBe("45m");
-	});
-
-	it("rejects a time it can't read, and changes nothing", async () => {
-		const { live, releaseCommand, notify } = setup({ releaseAfter: "10m" });
-
-		await releaseCommand("Custom time…", "soon");
-
-		expect(saved).toBeUndefined();
-		expect(live.releaseAfter).toBe("10m");
-		expect(notify.mock.calls[0]?.[1]).toBe("error");
-	});
-
-	it("goes back to leaving it to keep_alive", async () => {
-		const { live, releaseCommand } = setup({ releaseAfter: 0 });
-
-		await releaseCommand("Leave it to keep_alive (default)");
-
-		expect(saved).toEqual({});
-		expect(live.releaseAfter).toBeUndefined();
-	});
-
-	it("changes nothing when the config file can't be saved", async () => {
-		const { live, releaseCommand, notify } = setup();
-		refusal = "pi-ollama-config.json couldn't be read (bad JSON), so it was left as it is.";
-
-		await releaseCommand("As soon as I leave the model");
-
-		expect(live.releaseAfter).toBeUndefined();
-		expect(notify).toHaveBeenCalledWith(`Not changed: ${refusal}`, "error");
 	});
 });

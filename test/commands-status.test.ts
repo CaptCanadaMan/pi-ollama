@@ -104,14 +104,32 @@ describe("/ollama-status", () => {
 		);
 	});
 
-	it("says whether model warm-up is on", async () => {
+	it("shows the model loading settings, in the same words as the /ollama-preload menu", async () => {
 		stubServer(async () => Response.json({ models: [] }));
 
-		const on = await command("ollama-status", [], {}, { warm: true })();
-		const off = await command("ollama-status", [], {}, { warm: false })();
+		const defaults = await command("ollama-status", [], {}, { warm: true })();
+		const custom = await command(
+			"ollama-status",
+			[],
+			{},
+			{ warm: false, keepAlive: -1, releaseAfter: "5m" },
+		)();
 
-		expect(on.text).toContain("Warm-up: on (/ollama-warm-up to change)");
-		expect(off.text).toContain("Warm-up: off (/ollama-warm-up to change)");
+		expect(defaults.text).toContain(
+			[
+				"Model loading (/ollama-preload to change):",
+				"  Preload on Select: on",
+				"  Idle Timeout: server default",
+				"  Unload on Swap or Exit: immediate",
+			].join("\n"),
+		);
+		expect(custom.text).toContain(
+			[
+				"  Preload on Select: off",
+				"  Idle Timeout: never sleep",
+				"  Unload on Swap or Exit: after 5m",
+			].join("\n"),
+		);
 	});
 
 	it("reports an error when there's no Ollama to talk to", async () => {

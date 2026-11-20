@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PersistedConfig } from "../src/config.js";
 
-// The config module is mocked so /ollama-warm-up never touches the real ~/.pi file.
+// The config module is mocked so nothing here touches the real ~/.pi file.
 let saved: PersistedConfig | undefined;
 /** Set to make the next save fail the way an unreadable config file does. */
 let refusal: string | undefined;
@@ -58,18 +58,14 @@ function setup(
 			config: { handler: (args: string, ctx: unknown) => Promise<void> },
 		) => commands.set(name, config.handler),
 	};
-	registerWarmup(pi, { ...settings, ...overrides }, { whenReady, settleMs: 0 });
+	const warmup = registerWarmup(pi, { ...settings, ...overrides }, { whenReady, settleMs: 0 });
 	const setStatus = vi.fn();
 	const ui = { setStatus };
 	const notify = vi.fn();
 	return {
 		setStatus,
 		notify,
-		warmUpCommand: (answer: string | undefined, model: object | undefined = gemma) =>
-			commands.get("ollama-warm-up")?.("", {
-				model,
-				ui: { setStatus, notify, select: vi.fn(async () => answer) },
-			}),
+		preloadNow: (model: object) => warmup.preloadNow({ model, ui } as never),
 		sessionStart: (model: object | undefined) =>
 			handlers.get("session_start")?.({ reason: "startup" }, { model, ui }),
 		selectModel: (model: object) => handlers.get("model_select")?.({ model }, { model, ui }),
@@ -442,52 +438,25 @@ describe("warming the prompt, not just the weights", () => {
 	});
 });
 
-describe("/ollama-warm-up", () => {
-	it("Off saves the choice and stops future warm-ups", async () => {
-		const { fetchMock } = stubOllama();
-		const { warmUpCommand, sessionStart } = setup();
-
-		await warmUpCommand("Off");
-		sessionStart(gemma);
-		await new Promise((r) => setTimeout(r, 20));
-
-		expect(saved).toEqual({ warm: false });
-		expect(fetchMock).not.toHaveBeenCalled();
-	});
-
-	it("On saves the choice and warms the current model right away", async () => {
+describe("preloading on request (/ollama-preload switching it on)", () => {
+	it("warms the model the user is on right away", async () => {
 		const { bodies } = stubOllama();
-		const { warmUpCommand } = setup(undefined, { warm: false });
+		const { preloadNow } = setup();
 
-		await warmUpCommand("On (default)", gemma);
+		preloadNow(gemma);
 
-		expect(saved).toEqual({ warm: true });
 		await vi.waitFor(() => expect(bodies).toHaveLength(1));
 		expect(bodies[0]!.model).toBe("gemma4:26b");
 	});
 
-	it("leaves warm-up as it was when the config file can't be saved", async () => {
-		const { bodies } = stubOllama();
-		const { warmUpCommand, sessionStart, notify } = setup();
-		refusal = "pi-ollama-config.json couldn't be read (bad JSON), so it was left as it is.";
+	it("does nothing while preloading is off", async () => {
+		const { fetchMock } = stubOllama();
+		const { preloadNow } = setup(undefined, { warm: false });
 
-		await warmUpCommand("Off");
-		sessionStart(gemma);
+		preloadNow(gemma);
+		await new Promise((r) => setTimeout(r, 20));
 
-		expect(notify).toHaveBeenCalledWith(`Not changed: ${refusal}`, "error");
-		await vi.waitFor(() => expect(bodies).toHaveLength(1));
-	});
-
-	it("confirms the change, and cancelling changes nothing", async () => {
-		stubOllama();
-		const { warmUpCommand, notify } = setup();
-
-		await warmUpCommand(undefined);
-		expect(saved).toBeUndefined();
-		expect(notify).not.toHaveBeenCalled();
-
-		await warmUpCommand("Off");
-		expect(notify).toHaveBeenCalledWith(expect.stringMatching(/warm-up off/i), "info");
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });
 

@@ -90,8 +90,10 @@ You should see something like:
 
 ```
 Ollama base URL: http://localhost:11434
-keep_alive: defer to server (default)
-Warm-up: on (/ollama-warm-up to change)
+Model loading (/ollama-preload to change):
+  Preload on Select: on
+  Idle Timeout: server default
+  Unload on Swap or Exit: immediate
 ✓ Ollama reachable - 3 model(s) registered
   qwen2.5-coder:7b               ctx:32,768  [tools]
   gemma4:26b                     ctx:32,768  [tools, vision, reasoning]
@@ -110,9 +112,7 @@ Switch to one of the discovered models and use pi normally.
 | `/ollama-refresh` | Re-discover models from `/api/tags` + `/api/show` and re-register the provider. Useful after `ollama pull <model>`. |
 | `/ollama-info [model-id]` | Show capability details for a model. Omit the argument to pick from a list of currently registered models. |
 | `/ollama-context` | Set the context length (`num_ctx`) pi-ollama sends to `/api/chat`. Picker with common presets + custom input. Persists across pi launches. |
-| `/ollama-keep-alive` | Set the `keep_alive` pi-ollama sends to `/api/chat`, or (the default) send none and let the Ollama server's own setting decide. Picker with presets + custom input. Persists across pi launches. |
-| `/ollama-warm-up` | Turn warm-up on or off (see [Warm-up](#warm-up)). Persists across pi launches. |
-| `/ollama-release` | Choose whether a model you've used is unloaded when you switch away or quit pi (see [Releasing models you've finished with](#releasing-models-youve-finished-with)). Persists across pi launches. |
+| `/ollama-preload` | Model loading settings in one menu: Preload on Select, Idle Timeout, and Unload on Swap or Exit (see [Model loading](#model-loading)). Global and persistent. Replaces `/ollama-keep-alive` and `/ollama-warm-up`. |
 | `/ollama-stats` | Show tok/s throughput for this session's Ollama generations, per model: last, session average, fastest, tokens generated. |
 
 ---
@@ -123,9 +123,9 @@ Switch to one of the discovered models and use pi normally.
 |---|---|---|
 | `OLLAMA_HOST` | `localhost:11434` | Ollama server host[:port]. May include or omit protocol. |
 | `OLLAMA_CONTEXT_LENGTH` | unset | Override the `num_ctx` pi-ollama sends to `/api/chat`. Matches the env var Ollama itself respects, so a single setting works across tools. Superseded by `/ollama-context` if used. |
-| `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** - a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by `/ollama-keep-alive` if used. |
+| `OLLAMA_KEEP_ALIVE` | unset | `keep_alive` for `/api/chat` requests (`"10m"`, `"1h30m"`, or an integer; `-1` = keep loaded forever). Matches the env var Ollama itself respects. **Unset (default): the field is omitted from requests and the server's own setting decides** - a per-request `keep_alive` overrides the server, so earlier versions' hardcoded `5m` silently defeated server-side keep-warm. Superseded by the Idle Timeout setting in `/ollama-preload` if one has been saved. |
 | `OLLAMA_API_KEY` | unset | Bearer token for an Ollama behind a token-checking proxy. Only sent to `OLLAMA_HOST`, and only after you approve it (see [Using a remote Ollama with an API key](#using-a-remote-ollama-with-an-api-key)). |
-| `OLLAMA_NATIVE_WARM` | on | Warm-up at session start and on model or thinking-level changes. Set to `0` to switch it off. Superseded by `/ollama-warm-up` if used. |
+| `OLLAMA_NATIVE_WARM` | on | Warm-up at session start and on model or thinking-level changes. Set to `0` to switch it off. Superseded by the Preload on Select setting in `/ollama-preload` if one has been saved. |
 | `OLLAMA_NATIVE_DEBUG` | unset | Set to `1` to enable per-chunk debug logging. Writes to a **file** (see below) - not stderr, since stderr writes corrupt pi's TUI rendering. |
 | `OLLAMA_NATIVE_DEBUG_LOG` | `~/.pi/agent/cache/pi-ollama-debug.log` | Override the default debug log path. |
 | `OLLAMA_NATIVE_DUMP_DIR` | unset | If set, writes paired `req-*.json` / `res-*.ndjson` files per request - exact replay artifacts for diagnostics. |
@@ -196,33 +196,69 @@ It can't make the read itself any faster. If you send a message before the warm-
 ⠹ warming gemma4:12b · reading pi's prompt · 23s
 ```
 
-Switching models doesn't stack warm-ups. When you pick another model, the warm-up for the one you left is stopped, and the new one waits a couple of seconds before it starts, so cycling through the list with Ctrl+P only warms the model you land on. If you send a prompt before that wait is over, the warm-up is skipped, since your prompt loads the model anyway. If the warm-up is what loaded a model and you never sent it anything, moving on unloads it again. A model that was already in memory is left alone, and so is one you've had a turn with, unless you've asked for those to be released (next section).
+Switching models doesn't stack warm-ups. When you pick another model, the warm-up for the one you left is stopped, and the new one waits a couple of seconds before it starts, so cycling through the list with Ctrl+P only warms the model you land on. If you send a prompt before that wait is over, the warm-up is skipped, since your prompt loads the model anyway. If the warm-up is what loaded a model and you never sent it anything, moving on unloads it again. A model that was already in memory is left alone. What happens to one you've had a turn with is set by Unload on Swap or Exit, in the next section.
 
-Warm-up loads the model as soon as a session starts, which costs memory whether or not you use it. Turn it off with `/ollama-warm-up` (saved across launches) or `OLLAMA_NATIVE_WARM=0`.
+Warm-up loads the model as soon as a session starts, which costs memory whether or not you use it. Turn it off with Preload on Select in `/ollama-preload` (saved across launches) or `OLLAMA_NATIVE_WARM=0`.
 
 ---
 
-## Releasing models you've finished with
+## Model loading
 
-A model you've used stays loaded for as long as `keep_alive` says. With `keep_alive` at `-1` that means until Ollama quits: it survives switching to another model, and it survives quitting pi. Work through a few large models in one sitting and they are all still in memory at the end of it.
+`/ollama-preload` holds the three settings that decide when a model is loaded into memory and when it is unloaded. All three are global (they apply to every model) and persistent (saved across pi launches). `/ollama-status` prints the same three rows.
 
-`/ollama-release` decides what happens to a used model at the moment you leave it, whether by switching to another model or by quitting pi:
+```text
+Model loading (global, persistent)
 
-| Choice | What happens when you leave the model |
+  Preload on Select: on
+  Idle Timeout: server default
+  Unload on Swap or Exit: immediate
+```
+
+**Preload on Select.** Whether the model is loaded when a session starts or a model is selected. This is the [warm-up](#warm-up).
+
+| Option | Effect |
 |---|---|
-| Leave it to keep_alive (default) | Nothing. This is how it has always worked. |
-| As soon as I leave the model | Ollama unloads it straight away. |
-| 5 minutes, 30 minutes, or a time you type | Ollama unloads it that long after you left, unless you come back to it first. |
+| On (default) | The model and pi's prompt are loaded in the background. |
+| Off | The first request loads the model. |
 
-The choice is saved across pi launches, and `/ollama-status` shows it. Switching away and straight back within a couple of seconds doesn't count as leaving.
+**Idle Timeout.** Time since the last request to the active model. This is Ollama's `keep_alive`.
 
-The countdown is Ollama's own, so it doesn't need pi to stay open. One thing to know if you share an Ollama server: releasing a model unloads it for anything else that was using it too, such as a second pi session. It will just load again on that session's next request.
+| Option | Effect |
+|---|---|
+| Server default (OLLAMA_KEEP_ALIVE) | No `keep_alive` is sent. The server's own setting applies; Ollama's factory value is 5 minutes. |
+| Never sleep | The model is not unloaded for being idle (`keep_alive: -1`). |
+| 5m, 30m, 1h, Custom | The model is unloaded that long after the last request. |
+
+Any option other than the first overrides the server's `OLLAMA_KEEP_ALIVE`. Setting `OLLAMA_KEEP_ALIVE` in pi's environment has the same effect and is used when nothing has been saved here.
+
+**Unload on Swap or Exit.** Time since the model was deselected, either by selecting another model or by exiting pi.
+
+| Option | Effect |
+|---|---|
+| Immediate (default) | The model is unloaded when it is deselected. |
+| After 5m, After 30m, Custom | The model is unloaded that long after it was deselected, unless it is selected again first. |
+| Never unload | Deselecting the model does not unload it. Idle Timeout still applies. |
+
+Idle Timeout cannot do this job alone. It only counts from the last request, so with Never sleep a model would stay loaded through every swap and after pi has exited.
+
+Notes:
+
+- Unload on Swap or Exit only applies to a model that has handled a request in this session. Swapping away and back within a couple of seconds does not count.
+- The timer runs in Ollama, so it does not need pi to stay open.
+- On a shared Ollama server, unloading a model unloads it for every client. It loads again on the next request.
+- If the active model has its own entry in the config file (next section), the menu title says so, and that entry takes precedence.
+
+### Renamed commands
+
+`/ollama-keep-alive` and `/ollama-warm-up` were removed in favour of `/ollama-preload`. Their settings are the Idle Timeout and Preload on Select rows, and anything already saved carries over.
+
+The default for a model that has been used also changed. It used to stay loaded after a swap or exit for as long as `keep_alive` allowed. It is now unloaded immediately. Choose Never unload under Unload on Swap or Exit to get the earlier behaviour.
 
 ---
 
 ## Per-model settings
 
-`/ollama-keep-alive` and `/ollama-warm-up` set one value for every model. If you switch between models that want different treatment - a small one you keep loaded all day, a big one you'd rather have unloaded when you're done - you can give a model its own values in pi-ollama's config file, `~/.pi/agent/cache/pi-ollama-config.json`. That's the same file the slash commands save to, so add a `models` block next to whatever is already there:
+`/ollama-preload` sets one value for every model. If you switch between models that want different treatment - a small one you keep loaded all day, a big one you'd rather have unloaded when you're done - you can give a model its own values in pi-ollama's config file, `~/.pi/agent/cache/pi-ollama-config.json`. That's the same file the slash commands save to, so add a `models` block next to whatever is already there:
 
 ```json
 {
@@ -237,9 +273,9 @@ The key is the model's exact id, as `/ollama-status` lists it. A model's own val
 
 | Setting | Values | What it does |
 |---|---|---|
-| `keepAlive` | a duration like `"10m"` or `"1h30m"`, or whole seconds (`-1` keeps it loaded) | `keep_alive` for this model's requests |
-| `warm` | `true` or `false` | Whether this model is warmed up at session start and when you switch to it |
-| `releaseAfter` | `0`, a duration like `"10m"`, or whole seconds | What `/ollama-release` sets globally, for this model only: `0` unloads it as soon as you leave it, a duration that long after |
+| `keepAlive` | a duration like `"10m"` or `"1h30m"`, or whole seconds (`-1` is Never sleep) | Idle Timeout for this model |
+| `warm` | `true` or `false` | Preload on Select for this model |
+| `releaseAfter` | `0`, a duration like `"10m"`, whole seconds, or `"keep"` | Unload on Swap or Exit for this model: `0` is Immediate, a duration is After that long, `"keep"` is Never unload |
 
 Restart pi after editing the file. Any key that starts with `_` is ignored, which gives you somewhere to leave yourself a note.
 

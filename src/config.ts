@@ -27,15 +27,15 @@ export interface ApiKeyApproval {
 export interface PersistedConfig {
 	/** User-set context length override (set via /ollama-context). */
 	contextLength?: number;
-	/** User-set keep_alive override (set via /ollama-keep-alive). Absent = defer to the server. */
+	/** User-set keep_alive override (Idle Timeout in /ollama-preload). Absent = defer to the server. */
 	keepAlive?: string | number;
 	/** The host OLLAMA_API_KEY was approved for (see ApiKeyApproval). */
 	apiKeyApproval?: ApiKeyApproval;
 	/** Saved answer to "start Ollama?" at startup. Absent = ask. */
 	autostart?: "always" | "never";
-	/** Warm-up on/off set via /ollama-warm-up. Absent = OLLAMA_NATIVE_WARM, else on. */
+	/** Preload on select, set via /ollama-preload. Absent = OLLAMA_NATIVE_WARM, else on. */
 	warm?: boolean;
-	/** How long a used model stays loaded after the user leaves it (/ollama-release). Absent = keep_alive decides. */
+	/** What happens to a used model after the user leaves it (Unload on Swap or Exit in /ollama-preload): 0, a duration or "keep". Absent = unload at once. */
 	releaseAfter?: string | number;
 	/** Per-model settings, keyed by exact model id. Hand-edited; validated by model-config.ts. */
 	models?: unknown;
