@@ -113,6 +113,7 @@ Switch to one of the discovered models and use pi normally.
 | `/ollama-info [model-id]` | Show capability details for a model. Omit the argument to pick from a list of currently registered models. |
 | `/ollama-context` | Set the context length (`num_ctx`) pi-ollama sends to `/api/chat`. Picker with common presets + custom input. Persists across pi launches. |
 | `/ollama-preload` | Model loading settings in one menu: Preload on Select, Idle Timeout, and Unload on Swap or Exit (see [Model loading](#model-loading)). Global and persistent. Replaces `/ollama-keep-alive` and `/ollama-warm-up`. |
+| `/ollama-think` | Set the thinking level a model loads with, from the levels that model supports (see [A thinking level per model](#a-thinking-level-per-model)). Per-model and persistent. |
 | `/ollama-stats` | Show tok/s throughput for this session's Ollama generations, per model: last, session average, fastest, tokens generated. |
 
 ---
@@ -299,8 +300,47 @@ The key is the model's exact id, as `/ollama-status` lists it. A model's own val
 | `warm` | `true` or `false` | Preload on Select for this model |
 | `releaseAfter` | `0`, a duration like `"10m"`, whole seconds, or `"keep"` | Unload on Swap or Exit for this model: `0` is Immediate, a duration is After that long, `"keep"` is Never unload |
 | `server` | the name of an entry in `servers` | The Ollama server this model is on (see below) |
+| `thinkingLevel` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max` | The thinking level that loads when you select this model |
 
 Any key that starts with `_` is ignored, which gives you somewhere to leave yourself a note.
+
+### A thinking level per model
+
+pi keeps one thinking level and carries it from model to model, so a level you pick for one model is what the next one gets. If you'd rather each model came up at its own level, give it one.
+
+The quick way is `/ollama-think`. It shows the levels the model you're on actually supports, as Ollama reports them, and saves your pick for that model:
+
+```text
+Thinking level: muse-glimmer:30b (per-model, persistent) - not set
+
+  off
+  low
+  medium
+  high
+  max
+  Not set
+  Other model
+```
+
+Not set removes the saved level, so pi's own level applies to that model again. Other model lets you set a level for a model you aren't on. pi's `/thinking` still works as before: it changes the level for now, and `/ollama-think` decides what the model comes up with each time.
+
+The same thing in the config file:
+
+```json
+{
+  "models": {
+    "muse-glimmer:30b": { "thinkingLevel": "high" },
+    "gemma4:e4b": { "thinkingLevel": "off" }
+  }
+}
+```
+
+Selecting a model then sets pi's thinking level to that model's, so switching back and forth gets you each one's level in a single step. It's a starting point, not a lock: pi's picker shows the level, and you can change it for as long as you stay on that model. Selecting the model again loads its own level again.
+
+- It applies when you select a model and to the model a new session starts on. A resumed session keeps the level it was saved with.
+- A level the model doesn't support is reported at startup and not applied.
+- If another extension chooses a level for you when it switches model, that extension's choice is kept.
+- Models without a `thinkingLevel` are left as pi has them.
 
 ### Models on another Ollama server
 

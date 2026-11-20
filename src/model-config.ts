@@ -24,6 +24,10 @@ export interface ConfigIssue {
 	message: string;
 }
 
+/** pi's thinking levels, in order. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevelName = (typeof THINKING_LEVELS)[number];
+
 export interface ModelSettings {
 	keepAlive?: string | number;
 	warm?: boolean;
@@ -34,6 +38,8 @@ export interface ModelSettings {
 	releaseAfter?: string | number;
 	/** Name of a `servers` entry this model lives on. Absent = the default server. */
 	server?: string;
+	/** The thinking level that loads when this model becomes active (thinking-default.ts). */
+	thinkingLevel?: ThinkingLevelName;
 }
 
 /** An Ollama other than the default one, that models can be pinned to. */
@@ -93,6 +99,10 @@ const MODEL_FIELDS: Record<Exclude<keyof ModelSettings, "server">, Check> = {
 	keepAlive: keepAliveCheck,
 	warm: bool,
 	releaseAfter: releaseAfterCheck,
+	thinkingLevel: (v) =>
+		typeof v === "string" && (THINKING_LEVELS as readonly string[]).includes(v)
+			? undefined
+			: `must be one of ${THINKING_LEVELS.join(", ")}`,
 };
 
 /** Ollama's own default port, used when a host gives neither a scheme nor a port. */
@@ -280,6 +290,8 @@ export interface ResolvedModelSettings {
 	warm: boolean;
 	/** 0 = unload when the user leaves it (the default), a duration, or "keep". */
 	releaseAfter: string | number;
+	/** Only ever a model's own: there is no global thinking level here, pi has that. */
+	thinkingLevel?: ThinkingLevelName;
 }
 
 /** A used model is unloaded as soon as the user leaves it, unless they chose otherwise. */
@@ -298,6 +310,7 @@ export function resolveModelSettings(
 		...(keepAlive !== undefined && { keepAlive }),
 		warm: entry.warm ?? global.warm,
 		releaseAfter: entry.releaseAfter ?? global.releaseAfter ?? DEFAULT_RELEASE_AFTER,
+		...(entry.thinkingLevel !== undefined && { thinkingLevel: entry.thinkingLevel }),
 	};
 }
 

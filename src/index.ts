@@ -29,6 +29,7 @@ import { streamOllama } from "./provider.js";
 import { registerApiKeyApproval } from "./api-key-approval.js";
 import { registerConfigReporting } from "./config-report.js";
 import { registerRelease } from "./release.js";
+import { registerThinkingDefault, thinkingLevelIssues } from "./thinking-default.js";
 import { createOllamaLauncher, registerAutostart } from "./autostart.js";
 import { registerCommands } from "./commands.js";
 import { OLLAMA_DEBUG, OLLAMA_DEBUG_LOG } from "./debug.js";
@@ -179,12 +180,23 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	// live, keep the list for the next startup, register it.
 	let models: DiscoveredModel[] = [];
 	const ready = createReadySignal();
-	// What discovery found wrong with the named servers, last time it ran.
+	// What discovery found wrong with the named servers and the per-model
+	// thinking levels, last time it ran.
 	let serverIssues: ConfigIssue[] = [];
 	const refreshModels = async (): Promise<DiscoveredModel[]> => {
 		const found = await discoverAll(settings, settings.modelConfig ?? emptyModelConfig(), loadCache());
 		models = found.models;
-		serverIssues = found.issues;
+		serverIssues = [
+			...found.issues,
+			...thinkingLevelIssues(
+				settings.modelConfig,
+				models.map((m) => ({
+					id: m.id,
+					reasoning: m.reasoning,
+					thinkingLevelMap: toThinkingLevelMap(m.thinking),
+				})),
+			),
+		];
 		registerProvider(models);
 		// The default server being down is still a failure to the callers
 		// (startup, autostart, /ollama-refresh) - but by now its cached models
@@ -228,6 +240,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	registerApiKeyApproval(pi, settings, refreshModels, process.env.OLLAMA_API_KEY);
 	({ preloadNow } = registerWarmup(pi, settings, { whenReady: ready.whenReady }));
 	registerRelease(pi, settings);
+	registerThinkingDefault(pi, settings, () => models);
 	registerConfigReporting(pi, () => [...(settings.configIssues ?? []), ...serverIssues]);
 }
 

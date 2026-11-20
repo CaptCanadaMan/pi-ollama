@@ -68,6 +68,21 @@ function setup(settleMs = 0) {
 		setStatus,
 		sessionStart: (m: object) => handlers.get("session_start")?.({ reason: "startup" }, { model: m, ui }),
 		selectModel: (m: object) => handlers.get("model_select")?.({ model: m }, { model: m, ui }),
+		/**
+		 * The thinking level changes while `m` is active. `was` is what pi's
+		 * context still reports; the event carries the new level.
+		 */
+		levelChanged: (level: string, m: object, was = "off") =>
+			handlers.get("thinking_level_select")?.(
+				{ level },
+				{ model: m, ui, thinkingLevel: was, getSystemPrompt: () => "You are pi." },
+			),
+		/** pi switches to a model that can think, with pi's prompt available. */
+		selectThinkingModel: (m: object, level = "off") =>
+			handlers.get("model_select")?.(
+				{ model: m },
+				{ model: m, ui, thinkingLevel: level, getSystemPrompt: () => "You are pi." },
+			),
 		/** The user sent a prompt: pi starts a run. */
 		promptSent: () => handlers.get("agent_start")?.({}, { ui }),
 		/** A real turn finished on this model. */
@@ -164,6 +179,34 @@ describe("switching models during a warm-up", () => {
 
 		await vi.waitFor(() => expect(unloads()).toEqual(["gemma4:12b"]));
 		expect(warmUps()).toHaveLength(1);
+	});
+
+	it("a level set as part of the switch gets one warm-up, with that level, after the pause", async () => {
+		const { warmUps } = stubOllama();
+		const { selectThinkingModel, levelChanged } = setup(60);
+		const thinker = { ...small, reasoning: true };
+
+		// What a per-model thinking level does: the switch, then at once the level.
+		selectThinkingModel(thinker, "off");
+		levelChanged("high", thinker);
+		await settle(20);
+		const before = warmUps().length;
+		await settle(150);
+
+		expect(before).toBe(0);
+		expect(warmUps().map((w) => w.body.think)).toEqual([true]);
+	});
+
+	it("a level changed on its own, with no switch pending, re-warms straight away", async () => {
+		const { warmUps } = stubOllama();
+		const { sessionStart, levelChanged } = setup(5_000);
+		const thinker = { ...small, reasoning: true };
+
+		sessionStart(thinker);
+		await vi.waitFor(() => expect(warmUps()).toHaveLength(1));
+		levelChanged("high", thinker);
+
+		await vi.waitFor(() => expect(warmUps()).toHaveLength(2));
 	});
 
 	it("doesn't make the session's first warm-up wait", async () => {

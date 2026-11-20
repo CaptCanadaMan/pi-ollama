@@ -119,6 +119,12 @@ export function registerWarmup(
 	// Counts the runs pi has started, so a warm-up that was waiting can tell a
 	// prompt went out in the meantime.
 	let promptsSent = 0;
+	// Counts warm-up requests, so one that was waiting can tell it was overtaken.
+	let requests = 0;
+	// Until when a model switch is still settling. A thinking-level change in
+	// that window belongs to the switch (a per-model level, or another
+	// extension's preset) and waits out the rest of it rather than warming at once.
+	let settlingUntil = 0;
 
 	/** The active tools, in pi's order - the order the first turn declares them in. */
 	const activeTools = (): ToolInfo[] => {
@@ -183,11 +189,14 @@ export function registerWarmup(
 
 	const warm = async (model: WarmModel, ctx: WarmContext, waitMs = 0) => {
 		latest = model;
+		const mine = ++requests;
 		stopOthers(model.id);
 		const promptsBefore = promptsSent;
 		await whenReady();
 		if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
-		if (model !== latest) return;
+		// Only the most recent request goes ahead: a later one is for another
+		// model, or for this model with a newer thinking level.
+		if (mine !== requests || model !== latest) return;
 		releaseOthers(model.id);
 		// A prompt that went out while we waited is already loading the model and
 		// reading the same prefix; a warm-up beside it would only compete with it.
@@ -226,7 +235,10 @@ export function registerWarmup(
 	pi.on?.("session_start", (_event, ctx) => request(ctx.model, ctx));
 	// A switch waits a moment before loading anything, so cycling through the
 	// model list only warms the model the user stops on.
-	pi.on?.("model_select", (event, ctx) => request(event.model, ctx, settleMs));
+	pi.on?.("model_select", (event, ctx) => {
+		settlingUntil = Date.now() + settleMs;
+		request(event.model, ctx, settleMs);
+	});
 	pi.on?.("agent_start", () => {
 		promptsSent++;
 	});
@@ -241,7 +253,11 @@ export function registerWarmup(
 	// A new thinking level can change how the prompt renders, so the cached
 	// prefix no longer matches. The event carries the new level; ctx may not yet.
 	pi.on?.("thinking_level_select", (event, ctx) =>
-		request(ctx.model, { ...ctx, thinkingLevel: event.level }),
+		request(
+			ctx.model,
+			{ ...ctx, thinkingLevel: event.level },
+			Math.max(0, settlingUntil - Date.now()),
+		),
 	);
 
 	return { preloadNow: (ctx) => request(ctx.model, ctx) };
