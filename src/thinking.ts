@@ -52,6 +52,15 @@ const PI_LEVELS: readonly PiThinkingLevel[] = [
 ];
 const EFFORT_LEVELS = PI_LEVELS.slice(1);
 
+/**
+ * Sentinel mapping in a thinkingLevelMap that means "omit think" — let Ollama
+ * apply the model's own default. Needed because pi-ai's schema only carries
+ * string | null per level, and `null` doubles as "level unsupported" (hidden
+ * from pi's picker). Models whose top effort is ONLY their server default
+ * (no named value accepted by /api/chat) can't expose it any other way.
+ */
+export const THINK_DEFAULT_SENTINEL = "__default__";
+
 function isEffortLevel(v: unknown): v is PiThinkingLevel {
 	return typeof v === "string" && v !== "off" && PI_LEVELS.includes(v as PiThinkingLevel);
 }
@@ -187,6 +196,7 @@ export function resolveThink(
 	const level = clampLevel(true, map, reasoning);
 	if (level === "off") return map.off === null ? undefined : false;
 	const mapped = map[level];
+	if (mapped === THINK_DEFAULT_SENTINEL) return undefined;
 	if (typeof mapped === "string") return mapped;
 	return mapped === null ? undefined : true;
 }

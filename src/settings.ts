@@ -22,6 +22,7 @@
 
 import { createHash } from "node:crypto";
 import { type ApiKeyApproval, loadPersistedConfig, persistedConfigProblem } from "./config.js";
+import { loadModelsJsonOverrides, type OllamaModelsJsonOverrides } from "./models-json.js";
 import {
 	type ConfigIssue,
 	loadModelConfig,
@@ -90,6 +91,11 @@ export interface OllamaExtensionSettings {
 	apiKeyStatus: ApiKeyStatus;
 	/** Set when pi started Ollama this session (autostart.ts): how the user stops it. */
 	startedOllamaStopHint?: string;
+	/**
+	 * models.json providers.ollama.modelOverrides — thinking-level map overrides per model id.
+	 * Keyed by exact model id (as listed by /ollama-status).
+	 */
+	modelsJsonOverrides: OllamaModelsJsonOverrides;
 }
 
 /** On unless explicitly switched off - an unrecognized value leaves it on. */
@@ -247,5 +253,6 @@ export function loadSettings(): OllamaExtensionSettings {
 		throughput: resolveEnabledFlag(process.env.OLLAMA_NATIVE_THROUGHPUT),
 		warm: persisted.warm ?? resolveEnabledFlag(process.env.OLLAMA_NATIVE_WARM),
 		...resolveApiKey(process.env.OLLAMA_API_KEY, baseUrl, persisted.apiKeyApproval),
+		modelsJsonOverrides: loadModelsJsonOverrides(),
 	};
 }
