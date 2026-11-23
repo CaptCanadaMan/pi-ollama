@@ -266,14 +266,21 @@ export function toProviderModel(
 		: preference;
 	// The model's own thinking values drive pi's level picker and the `think`
 	// value on the wire (gh#13). Absent = legacy on/off for every level.
-	const thinkingLevelMap = toThinkingLevelMap(m.thinking);
+	const discoveredMap = toThinkingLevelMap(m.thinking);
+	// models.json overrides extend/replace it, so a level can be made visible
+	// even when /api/show reports none; "__default__" maps to an omitted think.
+	const overrideMap = settings.modelsJsonOverrides?.[m.id]?.thinkingLevelMap;
+	const thinkingLevelMap = discoveredMap || overrideMap
+		? { ...discoveredMap, ...(overrideMap as ThinkingLevelMap | undefined) }
+		: undefined;
 	return {
 		id: m.id,
 		name: m.name,
 		api: "ollama-native",
 		// A model pinned to a named server carries that server's address.
 		baseUrl: m.baseUrl ?? settings.baseUrl,
-		reasoning: m.reasoning,
+		// An override alone can mark a model thinking-capable in pi's picker.
+		reasoning: m.reasoning || Boolean(overrideMap),
 		...(thinkingLevelMap && { thinkingLevelMap }),
 		input: m.vision ? ["text", "image"] : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

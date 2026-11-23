@@ -5,6 +5,7 @@ import {
 	resolveThink,
 	thinkingSummary,
 	toThinkingLevelMap,
+	THINK_DEFAULT_SENTINEL,
 } from "../src/thinking.js";
 
 // gh#13: Ollama >= 0.34 reports each model's accepted `think` values in
@@ -114,7 +115,7 @@ describe("thinkingSummary - the /ollama-info line", () => {
 	});
 });
 
-describe("resolveThink - pi thinking level → Ollama think value", () => {
+describe("resolveThink - pi thinking level -> Ollama think value", () => {
 	describe("legacy: no thinking field reported", () => {
 		it("maps an absent level (pi's encoding of off) to an explicit false", () => {
 			expect(resolveThink(undefined)).toBe(false);
@@ -157,6 +158,25 @@ describe("resolveThink - pi thinking level → Ollama think value", () => {
 			expect(resolveThink("high", map(gemma4))).toBe(true);
 			expect(resolveThink("xhigh", map(museGlimmer))).toBe("max");
 			expect(resolveThink("minimal", map(noOff))).toBe("low");
+		});
+
+		it("handles THINK_DEFAULT_SENTINEL: omits think field (lets Ollama use server default)", () => {
+			const mapWithDefault = { xhigh: THINK_DEFAULT_SENTINEL } as any;
+			expect(resolveThink("xhigh", mapWithDefault)).toBeUndefined();
+		});
+
+		it("THINK_DEFAULT_SENTINEL only affects the mapped level, not others", () => {
+			const mapWithDefault = { low: "low", xhigh: THINK_DEFAULT_SENTINEL } as any;
+			expect(resolveThink("low", mapWithDefault)).toBe("low");
+			expect(resolveThink("xhigh", mapWithDefault)).toBeUndefined();
+		});
+
+		it("THINK_DEFAULT_SENTINEL works with clamp: clamped level gets sentinel behavior", () => {
+			// qwen38 has [false, "low", "medium", "xhigh"] - no high, so high clamps to xhigh
+			const qwen38Map = toThinkingLevelMap(qwen38);
+			// Manually add sentinel for xhigh
+			const mapWithDefault = { ...qwen38Map, xhigh: THINK_DEFAULT_SENTINEL } as any;
+			expect(resolveThink("high", mapWithDefault)).toBeUndefined(); // high -> xhigh -> sentinel -> undefined
 		});
 	});
 });

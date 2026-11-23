@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildChatRequestBody, shouldFlagSwallowedToolCall } from "../src/provider.js";
-import { toThinkingLevelMap } from "../src/thinking.js";
+import { toThinkingLevelMap, THINK_DEFAULT_SENTINEL } from "../src/thinking.js";
 
 // resolveThink's own cases live in thinking.test.ts.
 
@@ -140,5 +140,35 @@ describe("buildChatRequestBody — the wire body /api/chat actually receives", (
 			],
 		});
 		expect(withTools.tools).toHaveLength(1);
+	});
+
+	it("handles THINK_DEFAULT_SENTINEL: omits think field for that level", () => {
+		const thinkingLevelMap = { xhigh: THINK_DEFAULT_SENTINEL } as any;
+		const body = buildChatRequestBody({
+			...base,
+			reasoningCapable: true,
+			reasoningLevel: "xhigh",
+			thinkingLevelMap,
+		});
+		expect("think" in body).toBe(false);
+	});
+
+	it("THINK_DEFAULT_SENTINEL only affects the mapped level", () => {
+		const thinkingLevelMap = { low: "low", xhigh: THINK_DEFAULT_SENTINEL } as any;
+		const bodyLow = buildChatRequestBody({
+			...base,
+			reasoningCapable: true,
+			reasoningLevel: "low",
+			thinkingLevelMap,
+		});
+		expect(bodyLow.think).toBe("low");
+
+		const bodyXhigh = buildChatRequestBody({
+			...base,
+			reasoningCapable: true,
+			reasoningLevel: "xhigh",
+			thinkingLevelMap,
+		});
+		expect("think" in bodyXhigh).toBe(false);
 	});
 });
