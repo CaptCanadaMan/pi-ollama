@@ -1,3 +1,5 @@
+![pi-ollama - the pi logo connected to three Ollama models](assets/banner.webp)
+
 # pi-ollama
 
 Native Ollama provider extension for the [pi coding agent](https://github.com/earendil-works/pi).
